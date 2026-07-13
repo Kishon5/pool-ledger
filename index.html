@@ -329,6 +329,7 @@
 <div class="wrap" id="app"><div class="panel skeleton">Loading…</div></div>
 <div id="toast" role="status" aria-live="polite"></div>
 <input type="file" id="restore-file" accept="application/json" style="display:none">
+<input type="file" id="shot-file" accept="image/*" style="display:none">
 
 <script>
 /* ================= CONFIG — paste your Supabase project values ============ */
@@ -477,6 +478,7 @@ const ICONS = {
   download:'<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="3" x2="12" y2="15"/>',
   logout:'<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>',
   file:'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h5"/>',
+  shot:'<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7l1.5-3h5L16 7"/><circle cx="12" cy="13" r="3.5"/>',
 };
 const icon = n => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">${ICONS[n]||""}</svg>`;
 
@@ -653,21 +655,20 @@ function renderLogin(){
       <label><div class="label">Email</div><input id="em" type="email" autocomplete="email"></label>
       <label><div class="label">Password</div><input id="pw" type="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()"></label>
       <button class="btn primary" onclick="doLogin()">Sign in</button>
-      <button class="btn" onclick="doReset()">Forgot password</button>
       <button class="btn" onclick="toggleTheme()">${icon("theme")}Theme</button>
     </div>
-    <div class="hint">Accounts are created by the admin — there is no public sign-up.</div>
+    <div class="hint">Accounts are created by the admin — there is no public sign-up.
+      Forgot your password? Ask the admin to reset it.</div>
   </div>`;
 }
 async function doLogin(){
   const { error } = await sb.auth.signInWithPassword({ email:$("#em").value.trim(), password:$("#pw").value });
   error ? err(error) : boot();
 }
-async function doReset(){
-  const email = $("#em").value.trim(); if(!email) return toast("Enter your email first.");
-  const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: location.href });
-  error ? err(error) : toast("Password reset email sent (if the account exists).");
-}
+/* Self-service password reset is intentionally removed — the admin manages
+   member passwords (Supabase dashboard → Authentication → Users → update
+   password, or "Send password recovery"). The PASSWORD_RECOVERY handler
+   below still catches admin-sent recovery links. */
 function renderNewPassword(){
   app.innerHTML = `<h1>Pool Ledger</h1><div class="stamp">v${VERSION}</div>
   <div class="panel" style="max-width:420px">
@@ -730,6 +731,7 @@ async function refresh(){ await loadAdmin(); drawAdmin(); }
    we'd wipe half-typed input under their fingers */
 function formIsOpen(){
   return busy || A.openMoney || $("#tr-preview")?.innerHTML || $("#bonus-form")?.innerHTML
+      || $("#shot-box")?.innerHTML
       || ($("#nm-name") && $("#nm-name").value.trim());
 }
 /* re-fetch when the tab regains focus */
@@ -1236,6 +1238,150 @@ async function saveBonus(ev){
   });
 }
 
+/* ---------- screenshot import (on-device OCR — the image never leaves
+   this device; Tesseract.js is lazy-loaded from the CDN on first use) ----- */
+const BROKER_DATE_DMY = true;   // broker prints DD/MM/YYYY; flip if yours is MM/DD
+let tessReady = null;
+function loadTesseract(){
+  if(window.Tesseract) return Promise.resolve();
+  if(tessReady) return tessReady;
+  tessReady = new Promise((res, rej)=>{
+    const s = document.createElement("script");
+    s.src = "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";
+    s.onload = res;
+    s.onerror = ()=>{ tessReady=null; rej(new Error("Couldn't load the OCR library — check your connection and try again.")); };
+    document.head.appendChild(s);
+  });
+  return tessReady;
+}
+function pickShot(){ const el=$("#shot-file"); el.onchange=onShotFile; el.click(); }
+async function onShotFile(ev){
+  const f = ev.target.files[0]; ev.target.value = "";
+  if(!f) return;
+  const box = $("#shot-box"); if(!box) return;
+  box.innerHTML = `<div class="formbox"><div class="label">Reading screenshot…</div>
+    <div class="muted" id="shot-prog">Loading OCR engine (first use downloads ~3 MB, then cached)…</div></div>`;
+  try{
+    await loadTesseract();
+    const { data } = await Tesseract.recognize(f, "eng", { logger: m=>{
+      const el=$("#shot-prog");
+      if(el && m.status==="recognizing text") el.textContent = "Reading… " + Math.round(m.progress*100) + "%";
+    }});
+    renderShotReview(parseBrokerText(data.text));
+  }catch(e){ if(box) box.innerHTML=""; err(e); }
+}
+/* local datetime-local value with seconds ("YYYY-MM-DDTHH:MM:SS") */
+const localInput = d => { const p=n=>String(n).padStart(2,"0");
+  return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate())+"T"+p(d.getHours())+":"+p(d.getMinutes())+":"+p(d.getSeconds()); };
+/* Parse broker "Order Records" OCR text into trade rows. Anchors on the
+   repeating field labels; tolerant of fullwidth colons, dash variants and
+   missing lines. Every value is shown for review before anything is saved. */
+function parseBrokerText(text){
+  const norm = String(text).replace(/：/g,":").replace(/[–—−]/g,"-").replace(/＋/g,"+");
+  const lines = norm.split(/\n+/).map(s=>s.trim()).filter(Boolean);
+  const out = []; let cur = {};
+  const flush = ()=>{
+    if(cur.pnl!=null && !isNaN(cur.pnl) && cur.pnl!==0){
+      if(cur.won===false && cur.pnl>0) cur.pnl = -cur.pnl;  // "Lost" rows sometimes omit the minus
+      const d = shotDate(cur);
+      if(d){ cur.iso = d.toISOString(); cur.local = localInput(d); }
+      out.push(cur);
+    }
+    cur = {};
+  };
+  for(const ln of lines){
+    let m;
+    if((m = ln.match(/\b(PUT|CALL)\b/i))){
+      if(cur.pnl!=null) flush();               // a new block began without a Status line
+      cur.dir = cur.dir || m[1].toUpperCase();
+    }
+    if((m = ln.match(/\(\s*(\d{1,2}:\d{2}(?::\d{2})?)\s*-\s*(\d{1,2}:\d{2}(?::\d{2})?)\s*\)/)))
+      cur.cycleEnd = m[2];                     // settlement moment — drives order_time
+    if((m = ln.match(/Profit\s*and\s*Loss\s*:?\s*([+-]?\s*[\d,]+(?:\.\d+)?)/i)))
+      cur.pnl = toC(m[1].replace(/[+\s]/g,""));
+    if((m = ln.match(/Order\s*Time\s*:?\s*(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})[ ,]*(\d{1,2}:\d{2}(?::\d{2})?)?/i))){
+      cur.day=+m[1]; cur.mon=+m[2]; cur.year=+m[3]; cur.orderTime=m[4]||null;
+      if(!BROKER_DATE_DMY){ const t=cur.day; cur.day=cur.mon; cur.mon=t; }
+    }
+    if(/Status\s*:?\s*(Won|Win)\b/i.test(ln)){ cur.won=true; flush(); }
+    else if(/Status\s*:?\s*(Los[st]\w*|Lose)\b/i.test(ln)){ cur.won=false; flush(); }
+  }
+  flush();
+  return out;
+}
+function shotDate(c){
+  if(!c.year || !c.mon || !c.day) return null;
+  const t = c.cycleEnd || c.orderTime || "12:00";
+  const p = t.split(":").map(Number);
+  const d = new Date(c.year, c.mon-1, c.day, p[0], p[1]||0, p[2]||0);
+  if(isNaN(d.getTime())) return null;
+  // a cycle that settles just past midnight belongs to the next day
+  if(c.cycleEnd && c.orderTime){
+    const o=c.orderTime.split(":").map(Number), e=c.cycleEnd.split(":").map(Number);
+    if(e[0]*60+e[1] < o[0]*60+o[1]-2) d.setDate(d.getDate()+1);
+  }
+  return d;
+}
+function renderShotReview(trades){
+  const box = $("#shot-box"); if(!box) return;
+  if(!trades.length){
+    box.innerHTML = `<div class="formbox"><div class="label">No trades found in that image</div>
+      <div class="hint">The screenshot needs the order list with "Profit and Loss" and "Order Time"
+      lines visible. Crop away everything else and try again — or type the trade in manually above.</div>
+      <div style="margin-top:10px"><button class="btn" onclick="$('#shot-box').innerHTML=''">Close</button></div></div>`;
+    return;
+  }
+  box.innerHTML = `<div class="formbox">
+    <div class="label">Found ${trades.length} trade${trades.length>1?"s":""} — check each value, then save</div>
+    <div class="hint">Time is the cycle end (the settlement moment). Rows that look like
+      duplicates of trades already in the ledger start unticked.</div>
+    ${trades.map((r,i)=>{
+      const dup = r.iso && A.events.some(e=>!e.deleted && e.type==="trade" && e.pnl_c===r.pnl
+        && Math.abs(Date.parse(e.order_time)-Date.parse(r.iso))<60000);
+      return `<div class="srow" data-shot="${i}" style="align-items:flex-end;gap:12px">
+        <input type="checkbox" id="shot-c-${i}" ${(dup||!r.iso||!r.pnl)?"":"checked"}
+          aria-label="import row ${i+1}" style="width:19px;height:19px;flex:none;margin-bottom:12px;accent-color:var(--accent)">
+        <span style="flex:none;margin-bottom:12px;min-width:86px">
+          ${r.dir?`<span class="tag ${r.dir==="PUT"?"withdrawal":"deposit"}">${esc(r.dir)}</span>`:""}
+          ${r.won!=null?`<span class="muted" style="font-size:12px">${r.won?"Won":"Lost"}</span>`:""}
+          ${dup?`<span class="tag trash">dup?</span>`:""}</span>
+        <label style="flex:1;min-width:120px"><div class="label">P&L ($)</div>
+          <input id="shot-p-${i}" type="number" step="0.01" value="${r.pnl!=null?(r.pnl/100).toFixed(2):""}"></label>
+        <label style="flex:1.4;min-width:200px"><div class="label">Settled (cycle end)</div>
+          <input id="shot-t-${i}" type="datetime-local" step="1" value="${r.local||""}"></label>
+      </div>`;}).join("")}
+    <div style="margin-top:12px;display:flex;gap:8px">
+      <button class="btn primary" onclick="saveShotTrades(event)">Save selected</button>
+      <button class="btn" onclick="$('#shot-box').innerHTML=''">Discard</button></div></div>`;
+}
+async function saveShotTrades(ev){
+  const rows = [...document.querySelectorAll("#shot-box [data-shot]")];
+  const picks = [];
+  for(const r of rows){
+    const i = r.dataset.shot;
+    if(!$("#shot-c-"+i)?.checked) continue;
+    const pnl = toC($("#shot-p-"+i).value);
+    const t = isoFrom($("#shot-t-"+i).value);
+    if(!pnl || isNaN(pnl)) return toast(`Row ${+i+1}: P&L must be a non-zero amount.`);
+    if(!t) return toast(`Row ${+i+1}: pick a valid date and time.`);
+    picks.push({ pnl, t });
+  }
+  if(!picks.length) return toast("Nothing is ticked — select at least one trade.");
+  if(!confirm(`Save ${picks.length} trade${picks.length>1?"s":""} to the ledger?`)) return;
+  picks.sort((a,b)=>Date.parse(a.t)-Date.parse(b.t));   // insert oldest-first
+  await once(ev, async ()=>{
+    let saved = 0;
+    for(const p of picks){
+      const { error } = await sb.from("events").insert({ type:"trade", pnl_c:p.pnl, order_time:p.t });
+      if(error){ err(error); break; }
+      saved++;
+    }
+    const box=$("#shot-box"); if(box && saved===picks.length) box.innerHTML="";
+    if(saved) toast(`Imported ${saved} of ${picks.length} trade${picks.length>1?"s":""}`);
+    await refresh();
+  });
+}
+
 /* ---------- trades tab ---------- */
 function vTrades(){
   const filters = ["all","trade","join","deposit","withdrawal","exit","bonus"];
@@ -1278,8 +1424,10 @@ function vTrades(){
       <label><div class="label">Profit / loss ($, negative for loss)</div><input id="tr-pnl" type="number" step="0.01" placeholder="-25.40"></label>
       <label><div class="label">Order time (broker execution time)</div><input id="tr-when" type="datetime-local" value="${nowLocal()}"></label>
       <button class="btn primary" onclick="previewTrade()">Preview</button>
+      <button class="btn" onclick="pickShot()">${icon("shot")}Import screenshot</button>
     </div>
     <div id="tr-preview"></div>
+    <div id="shot-box"></div>
   </div>
   <div class="panel"><div class="label">Event history — tap a trade to see each member's split</div>
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
