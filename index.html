@@ -137,10 +137,15 @@
   .label{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--soft);
     margin-bottom:5px;font-weight:600}
   .mono{font-family:var(--font);font-variant-numeric:tabular-nums}
-  .big{font-family:var(--display);font-size:26px;font-weight:600;letter-spacing:-.02em}
+  .big{font-family:var(--display);font-size:26px;font-weight:600;letter-spacing:-.02em;white-space:nowrap}
+  /* KPI-grid numbers scale to their OWN card width (container query) so a long
+     value like $99,999.99 never overflows a narrow card, while the wide hero
+     card keeps a big number. Scoped to .cards so other .big uses keep 26px;
+     browsers without container queries fall back to that 26px too. */
+  .cards .big{font-size:clamp(16px,15cqi,28px)}
   .gain{color:var(--gain)} .loss{color:var(--loss)} .brass{color:var(--brass)}
   .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:14px}
-  .cards .panel{margin-top:0}
+  .cards>.panel{margin-top:0;container-type:inline-size}
   /* hero stat — the first KPI card carries the palette gradient */
   .cards>.panel:first-child{background:var(--grad);border-color:transparent;
     box-shadow:0 10px 30px color-mix(in srgb,var(--accent) 22%,transparent)}
