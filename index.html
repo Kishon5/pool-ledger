@@ -340,7 +340,7 @@
 /* ================= CONFIG — paste your Supabase project values ============ */
 const SUPABASE_URL = "https://kldacwiknlzrwlzicbja.supabase.co";       // e.g. https://abcd1234.supabase.co
 const SUPABASE_ANON_KEY = "sb_publishable_ZfMtmD7rOahFNFtVeMYlcA_wEAB6Ajm";     // Settings -> API -> anon public
-const VERSION = "2.2.0";
+const VERSION = "2.3.0";
 /* ========================================================================== */
 
 let sb = null;
@@ -550,6 +550,29 @@ function allocate(totalC, weights, ids){
   const step = rem>0?1:-1;
   for(let k=0; rem!==0; k=(k+1)%order.length){ base[order[k].i]+=step; rem-=step; }
   return base;
+}
+
+/* ---------- broker withdrawal fee ----------
+   The broker charges max(minimum fee, rate% of the GROSS amount withdrawn).
+   With the defaults (25%, $50 min) the minimum rules every withdrawal up to
+   $200 gross and the percentage takes over above — the schedule is continuous
+   at exactly $200. The ledger stores the gross as amount_c (that is what left
+   the pool) and the fee as fee_c; the member received amount_c - fee_c. */
+const FEE_RATE_PCT = 25;
+const FEE_MIN_C    = 5000;
+function brokerFee(grossC, ratePct, minC){
+  if(!(grossC>0)) return 0;
+  return Math.max(minC, Math.round(grossC*ratePct/100));
+}
+/* smallest gross whose net (gross - fee) covers netC. net is monotone in
+   gross, so nudge the float estimate by whole cents until exact — the member
+   never receives less than asked (at most a cent more from rounding). */
+function grossForNet(netC, ratePct, minC){
+  if(!(netC>0)) return 0;
+  let g = Math.max(1, Math.ceil(netC*100/(100-ratePct)));
+  while(g - Math.round(g*ratePct/100) < netC) g++;
+  while(g>1 && (g-1) - Math.round((g-1)*ratePct/100) >= netC) g--;
+  return Math.max(g, netC + minC);
 }
 
 /* Faithful client-side replay — mirrors the Postgres recompute_pool exactly
@@ -930,16 +953,49 @@ function vMembers(){
 function moneyForm(m, kind){
   const s = A.state[m.id]||{balance_c:0,contributed_c:0};
   const avail = Math.max(0, s.balance_c - s.contributed_c);
-  const isDep = kind==="deposit";
-  return `<div class="formbox">
-    <div class="label">${isDep ? "Deposit — add new capital for "+esc(m.name)
-      : "Withdraw profit for "+esc(m.name)+" — available "+fmt(avail)+" (profit only; capital returns via Exit)"}</div>
+  if(kind==="deposit") return `<div class="formbox">
+    <div class="label">Deposit — add new capital for ${esc(m.name)}</div>
     <div class="row" style="margin-top:6px">
       <label><div class="label">Amount ($)</div><input id="amt-${m.id}" type="number" step="0.01"></label>
       <label><div class="label">When (order time)</div><input id="when-${m.id}" type="datetime-local" value="${nowLocal()}"></label>
-      <button class="btn primary" onclick="saveMoney('${m.id}','${kind}',event)">${isDep?"Save deposit":"Save withdrawal"}</button>
+      <button class="btn primary" onclick="saveMoney('${m.id}','deposit',event)">Save deposit</button>
       <button class="btn" onclick="A.openMoney=null;drawAdmin()">Cancel</button>
     </div></div>`;
+  return `<div class="formbox">
+    <div class="label">Withdraw profit for ${esc(m.name)} — available ${fmt(avail)} (profit only; capital returns via Exit)</div>
+    <div class="row" style="margin-top:6px">
+      <label><div class="label">Member receives ($)</div><input id="amt-${m.id}" type="number" step="0.01" oninput="updFeePreview('${m.id}')"></label>
+      <label><div class="label">Broker fee (%)</div><input id="feerate-${m.id}" type="number" step="0.01" min="0" max="99.99" value="${FEE_RATE_PCT}" oninput="updFeePreview('${m.id}')" style="width:90px"></label>
+      <label><div class="label">Minimum fee ($)</div><input id="feemin-${m.id}" type="number" step="0.01" min="0" value="${(FEE_MIN_C/100).toFixed(2)}" oninput="updFeePreview('${m.id}')" style="width:90px"></label>
+      <label><div class="label">When (order time)</div><input id="when-${m.id}" type="datetime-local" value="${nowLocal()}"></label>
+      <button class="btn primary" onclick="saveMoney('${m.id}','withdraw',event)">Save withdrawal</button>
+      <button class="btn" onclick="A.openMoney=null;drawAdmin()">Cancel</button>
+    </div>
+    <div id="feeprev-${m.id}" class="hint">Enter the amount ${esc(m.name)} should receive in hand — the broker's withdrawal fee is added on top automatically.</div></div>`;
+}
+/* live preview: what must actually leave the broker to net the typed amount */
+function feePlan(id){
+  const netC  = toC($("#amt-"+id)?.value);
+  const rate  = parseFloat($("#feerate-"+id)?.value);
+  const minC  = toC($("#feemin-"+id)?.value);
+  if(!(netC>0)) return { msg:null };
+  if(!(rate>=0 && rate<100)) return { msg:"Fee rate must be between 0 and 99.99%." };
+  if(!(minC>=0)) return { msg:"Minimum fee must be $0 or more." };
+  const grossC = grossForNet(netC, rate, minC);
+  const feeC   = brokerFee(grossC, rate, minC);
+  return { netC:grossC-feeC, rate, minC, grossC, feeC, minApplied: feeC===minC && Math.round(grossC*rate/100)<minC };
+}
+function updFeePreview(id){
+  const box = $("#feeprev-"+id); if(!box) return;
+  const p = feePlan(id);
+  if(!p.grossC){ box.innerHTML = esc(p.msg || "Enter the amount the member should receive in hand — the broker's withdrawal fee is added on top."); return; }
+  const m = A.members.find(x=>x.id===id), s = A.state[id]||{balance_c:0,contributed_c:0};
+  const avail = Math.max(0, s.balance_c - s.contributed_c);
+  box.innerHTML = `Withdraw <b class="mono">${fmt(p.grossC)}</b> from the broker
+    → fee <b class="mono">${fmt(p.feeC)}</b> ${p.minApplied?`(minimum ${fmt(p.minC)} fee applies)`:`(${p.rate}% of gross)`}
+    → ${esc(m?.name||"member")} receives <b class="mono">${fmt(p.netC)}</b>.
+    Additional funds needed on top: <b class="mono">${fmt(p.feeC)}</b>.
+    ${p.grossC>avail?`<span style="color:var(--warn)">The gross ${fmt(p.grossC)} exceeds their available profit (${fmt(avail)}) — the database will reject it. Largest possible in-hand amount right now: <b class="mono">${fmt(Math.max(0, avail - brokerFee(avail, p.rate, p.minC)))}</b>.</span>`:""}`;
 }
 function toggleMoney(id, kind){
   const key = id+":"+kind;
@@ -948,26 +1004,40 @@ function toggleMoney(id, kind){
   if(A.openMoney===key){ const el=$("#amt-"+id); if(el) el.focus(); }
 }
 async function saveMoney(id, kind, ev){
-  const c = toC($("#amt-"+id).value);
-  if(!(c>0)) return toast("Enter a positive amount.");
   const t = isoFrom($("#when-"+id).value);
   if(!t) return toast("Pick a valid date and time.");
   const m = A.members.find(x=>x.id===id);
-  // Date.parse both sides — t is "…Z" while Postgres returns "…+00:00", so a
-  // plain string compare gives wrong answers
-  if(kind==="deposit" && Date.parse(t) < Date.parse(m.joined_at)
-     && !confirm("This deposit is dated before the member's join date. Save anyway?")) return;
-  if(kind==="withdraw"){
-    const s = A.state[id]||{balance_c:0,contributed_c:0};
-    const avail = Math.max(0, s.balance_c - s.contributed_c);
-    if(c > avail && !confirm(`This withdrawal (${fmt(c)}) is MORE than ${m.name}'s available profit (${fmt(avail)}). It will eat into their capital. Save anyway?`)) return;
+  if(kind==="deposit"){
+    const c = toC($("#amt-"+id).value);
+    if(!(c>0)) return toast("Enter a positive amount.");
+    // Date.parse both sides — t is "…Z" while Postgres returns "…+00:00", so a
+    // plain string compare gives wrong answers
+    if(Date.parse(t) < Date.parse(m.joined_at)
+       && !confirm("This deposit is dated before the member's join date. Save anyway?")) return;
+    return once(ev, async ()=>{
+      const { error } = await sb.from("events").insert({
+        type:"deposit", member_id:id, amount_c:c, order_time:t });
+      if(error) return err(error);
+      A.openMoney = null;
+      toast(`Deposit ${fmt(c)} saved for ${m.name}`);
+      await refresh();
+    });
   }
+  // withdrawal: the typed amount is what the member receives IN HAND; the
+  // ledger records the gross that left the broker plus the fee inside it
+  const p = feePlan(id);
+  if(p.msg) return toast(p.msg);
+  if(!p.grossC) return toast("Enter a positive amount.");
+  const s = A.state[id]||{balance_c:0,contributed_c:0};
+  const avail = Math.max(0, s.balance_c - s.contributed_c);
+  if(p.grossC > avail && !confirm(
+    `Including the ${fmt(p.feeC)} broker fee, this withdrawal takes ${fmt(p.grossC)} from the pool — MORE than ${m.name}'s available profit (${fmt(avail)}). The database will likely reject it. Try anyway?`)) return;
   await once(ev, async ()=>{
     const { error } = await sb.from("events").insert({
-      type: kind==="deposit" ? "deposit" : "withdrawal", member_id:id, amount_c:c, order_time:t });
+      type:"withdrawal", member_id:id, amount_c:p.grossC, fee_c:p.feeC, order_time:t });
     if(error) return err(error);
     A.openMoney = null;
-    toast(`${kind==="deposit"?"Deposit":"Withdrawal"} ${fmt(c)} saved for ${m.name}`);
+    toast(`Withdrawal saved — ${fmt(p.grossC)} from broker (${fmt(p.feeC)} fee), ${fmt(p.netC)} to ${m.name}`);
     await refresh();
   });
 }
@@ -1038,8 +1108,10 @@ function assembleHistory(m, s, allocRows, eventRows){
   rows.push({ t:m.joined_at, seq:-1, type:"joined", amt:m.original_capital_c, note:"Starting capital" });
   eventRows.forEach((e,i)=>{
     if(e.type==="deposit") rows.push({ t:e.order_time, seq:1e9+i, type:"deposit", amt:e.amount_c });
-    if(e.type==="withdrawal") rows.push({ t:e.order_time, seq:1e9+i, type:"withdrawal", amt:-e.amount_c });
-    if(e.type==="exit") rows.push({ t:e.order_time, seq:2e9+i, type:"exit", amt:s.payout_c!=null?-s.payout_c:null, note:"Full payout" });
+    if(e.type==="withdrawal") rows.push({ t:e.order_time, seq:1e9+i, type:"withdrawal", amt:-e.amount_c,
+      note: e.fee_c!=null ? `received ${fmt(e.amount_c-e.fee_c)} after ${fmt(e.fee_c)} broker fee` : "" });
+    if(e.type==="exit") rows.push({ t:e.order_time, seq:2e9+i, type:"exit", amt:s.payout_c!=null?-s.payout_c:null,
+      note: "Full payout" + (e.fee_c!=null ? ` · ~${fmt(e.fee_c)} broker fee` : "") });
   });
   allocRows.forEach(a=>rows.push({ t:a.order_time, seq:a.id, type:"trade share", amt:a.share_c, before:a.balance_before_c, after:a.balance_after_c }));
   // compare as epoch ms — joined_at, events and allocations can carry different
@@ -1085,14 +1157,15 @@ function statementFor(rows, ym){
     else if(r.type==="withdrawal") totals.withdrawals += r.amt||0;
     else if(r.type==="trade share") totals.trading += r.amt||0;
     else if(r.type==="exit") totals.exit += r.amt||0;
-    items.push({ t:r.t, type:r.type, amt:r.amt, bal });
+    items.push({ t:r.t, type:r.type, amt:r.amt, bal, note:r.note });
   }
   return { opening, closing: items.length ? items[items.length-1].bal : opening, totals, items };
 }
 function statementHTML(name, ym, s){
   const [y,m] = ym.split("-");
   const monthName = new Date(y, m-1, 1).toLocaleDateString("en-US",{month:"long",year:"numeric"});
-  const row = r => `<tr><td>${fmtT(r.t)}</td><td>${esc(r.type==="trade share"?"trade P&amp;L":r.type)}</td>
+  const row = r => `<tr><td>${fmtT(r.t)}</td><td>${esc(r.type==="trade share"?"trade P&L":r.type)}${
+      r.note?`<div style="font-size:10px;color:#888">${esc(r.note)}</div>`:""}</td>
     <td class="num${r.amt<0?' neg':''}">${r.amt==null?"—":fmt(r.amt,true)}</td>
     <td class="num">${fmt(r.bal)}</td></tr>`;
   return `<!doctype html><html><head><meta charset="utf-8">
@@ -1187,9 +1260,16 @@ async function addMember(ev){
 }
 async function doExit(id, ev){
   const m=A.members.find(x=>x.id===id), s=A.state[id];
-  if(!confirm(`Exit ${m.name}? Pays out their full balance of ${fmt(s.balance_c)}, locks in realized profit of ${fmt(s.balance_c-s.contributed_c)}, and moves them to the Archive. Their history stays in the replay.`)) return;
+  // broker fee on the payout is informational only — the ledger still pays out
+  // the full balance; the fee is what the broker keeps from the cash in transit
+  const feeC = s.balance_c>0 ? brokerFee(s.balance_c, FEE_RATE_PCT, FEE_MIN_C) : 0;
+  const feeNote = feeC>0
+    ? `\n\nBroker withdrawal fee estimate: ${fmt(feeC)} (${FEE_RATE_PCT}% of gross, ${fmt(FEE_MIN_C)} minimum) — they receive about ${fmt(Math.max(0, s.balance_c-feeC))} in hand.`
+      + (feeC>=s.balance_c ? "\nWARNING: the balance is below the minimum broker fee — the fee would consume the entire payout." : "")
+    : "";
+  if(!confirm(`Exit ${m.name}? Pays out their full balance of ${fmt(s.balance_c)}, locks in realized profit of ${fmt(s.balance_c-s.contributed_c)}, and moves them to the Archive. Their history stays in the replay.${feeNote}`)) return;
   await once(ev, async ()=>{
-    const { error } = await sb.from("events").insert({ type:"exit", member_id:id, order_time:new Date().toISOString() });
+    const { error } = await sb.from("events").insert({ type:"exit", member_id:id, order_time:new Date().toISOString(), fee_c: feeC>0 ? feeC : null });
     if(error) return err(error);
     toast(`${m.name} exited`); await refresh();
   });
@@ -1490,7 +1570,9 @@ function vTrades(){
                 : e.type==="exit" ? exitAmt(e) : e.amount_c;
         const sign = e.type==="trade"||e.type==="bonus";
         const note = e.type==="join" ? " · initial capital"
-                   : e.type==="exit" ? " · full payout" : "";
+                   : e.type==="exit" ? " · full payout" + (e.fee_c!=null?` · ~${fmt(e.fee_c)} broker fee`:"")
+                   : e.type==="withdrawal" && e.fee_c!=null
+                     ? ` · ${fmt(e.amount_c-e.fee_c)} received + ${fmt(e.fee_c)} broker fee` : "";
         return `<div class="line" ${e.type==="trade"?`style="cursor:pointer" onclick="toggleAlloc('${e.id}')"`:""}>
           <div><span class="tag ${e.type}">${e.type}</span>${new Date(e.order_time).toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"})}${e.member_id?` · ${esc(nameOf(e.member_id))}`:""}${esc(note)}${e.type==="trade"?" · ▾ split":""}</div>
           <div style="display:flex;gap:8px;align-items:center">

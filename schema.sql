@@ -10,6 +10,9 @@
 -- from the events table and writes results into derived tables.
 -- Same-timestamp ordering rule: join/deposit/bonus BEFORE trade,
 -- withdrawal/exit AFTER trade.
+-- v2.3: withdrawal/exit events may carry fee_c — the broker's withdrawal
+-- fee already contained in the gross amount_c. Display-only metadata:
+-- the replay math is unchanged (balances move by the gross).
 -- ============================================================
 
 -- ---------- core tables ----------
@@ -37,9 +40,13 @@ create table if not exists events (
   pnl_c bigint,                             -- trades only (may be negative)
   member_id uuid references members(id) on delete cascade,
   amount_c bigint,                          -- deposit/withdrawal/bonus
+  fee_c bigint,                             -- withdrawal/exit: broker fee inside amount_c (display only)
   deleted boolean not null default false,   -- soft delete (Trash)
   created_by uuid default auth.uid()
 );
+-- upgrade path for databases created before v2.3 (create-if-not-exists above
+-- won't touch an existing table)
+alter table events add column if not exists fee_c bigint;
 create index if not exists events_order_idx on events(order_time, created_at);
 
 -- ---------- derived tables (written ONLY by recompute_pool) ----------
@@ -345,6 +352,13 @@ begin
     if new.type in ('deposit','withdrawal') and (new.amount_c is null or new.amount_c <= 0) then
       raise exception 'Amount must be positive.';
     end if;
+    -- broker fee is part of amount_c (gross); the member received amount_c - fee_c
+    if new.fee_c is not null and new.fee_c < 0 then
+      raise exception 'Broker fee cannot be negative.';
+    end if;
+    if new.type = 'withdrawal' and new.fee_c is not null and new.fee_c >= new.amount_c then
+      raise exception 'Broker fee must be smaller than the withdrawal amount.';
+    end if;
   elsif new.type = 'bonus' then
     if new.amount_c is null or new.amount_c = 0 then raise exception 'Bonus amount required.'; end if;
   end if;
@@ -454,7 +468,7 @@ begin
          coalesce((m->>'created_at')::timestamptz, now())
   from jsonb_array_elements(payload->'members') m;
 
-  insert into events (id, type, order_time, created_at, pnl_c, member_id, amount_c, deleted)
+  insert into events (id, type, order_time, created_at, pnl_c, member_id, amount_c, fee_c, deleted)
   select (e->>'id')::uuid,
          e->>'type',
          (e->>'order_time')::timestamptz,
@@ -462,6 +476,7 @@ begin
          (e->>'pnl_c')::bigint,
          (e->>'member_id')::uuid,
          (e->>'amount_c')::bigint,
+         (e->>'fee_c')::bigint,          -- absent in pre-v2.3 backups -> null
          coalesce((e->>'deleted')::boolean, false)
   from jsonb_array_elements(payload->'events') e;
 
