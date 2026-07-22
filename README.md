@@ -6,6 +6,7 @@ A single-file web app for tracking a shared trading pool — members, deposits, 
 
 - **Admin dashboard** — pool KPIs, ownership breakdown, trade logging with an exact split preview, event history with filters, trash/restore, archive, append-only audit log
 - **Screenshot import** — photograph/screenshot your broker's order list and the app OCRs it on-device (Tesseract.js, image never uploaded), extracts each trade's P&L and settlement time, flags likely duplicates, and lets you review every value before saving
+- **Broker withdrawal fees** — type what the member should receive in hand and a live preview shows the gross to withdraw from the broker, the fee (max of a % of gross and a flat minimum — defaults 25% / $50), and the extra funds needed; the fee is recorded on the event and shown in history, statements, and CSV exports
 - **Admin-managed passwords** — no self-service reset; the admin sets member passwords in Supabase Auth
 - **Member portal** — each member sees only their own balance, history, charts, and statements (enforced by Postgres row-level security)
 - **Money-exact math** — integer cents everywhere; largest-remainder allocation mirrors the Postgres replay engine to the cent
