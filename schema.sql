@@ -147,7 +147,7 @@ end $$;
 
 -- never remove the last admin
 create or replace function guard_last_admin() returns trigger
-language plpgsql as $$
+language plpgsql set search_path = public as $$
 begin
   if (select count(*) from admins) <= 1 then
     raise exception 'Cannot remove the last remaining admin.';
@@ -171,6 +171,24 @@ begin
                order by created_at limit 1)
    returning id into mid;
   return mid;
+end $$;
+
+-- which member rows belong to a pool admin — for the "admin" badge in the
+-- admin UI. Matches on the login link, OR (for an admin whose member row was
+-- never linked, e.g. because admins skip link_member at sign-in) on email.
+-- Admin-only: a non-admin caller gets an empty set, so members never learn
+-- who the admin is. Reads auth.users, so it must be SECURITY DEFINER.
+create or replace function admin_member_ids() returns setof uuid
+language plpgsql security definer set search_path = public stable as $$
+begin
+  if not me_is_admin() then return; end if;
+  return query
+    select m.id from members m
+    where (m.user_id is not null
+           and exists (select 1 from admins a where a.user_id = m.user_id))
+       or (m.email is not null
+           and exists (select 1 from admins a join auth.users u on u.id = a.user_id
+                       where lower(u.email) = lower(m.email)));
 end $$;
 
 -- ============================================================
@@ -276,12 +294,18 @@ begin
 
     elsif ev.etype = 'withdrawal' then
       select name into v_name from members where id = ev.mid;
-      if exists (select 1 from st where member_id = ev.mid
-                 and ev.amt > greatest(0, bal_c - contrib_c)) then
+      -- withdrawal drains profit first, then dips into capital. The part beyond
+      -- available profit (bal-contrib) reduces contributed capital, so
+      -- profit = bal - contrib never goes negative from a withdrawal. A single
+      -- UPDATE so both expressions read the SAME pre-update bal_c/contrib_c.
+      if exists (select 1 from st where member_id = ev.mid and ev.amt > bal_c) then
         insert into replay_warnings(event_id,msg) values (ev.eid,
-          'Withdrawal for '||v_name||' exceeds their profit at that point in history — likely a later backdated edit.');
+          'Withdrawal for '||v_name||' exceeds their balance at that point in history — balance went negative.');
       end if;
-      update st set bal_c = bal_c - ev.amt where member_id = ev.mid;
+      update st set
+        contrib_c = greatest(0, contrib_c - greatest(0, ev.amt - greatest(0, bal_c - contrib_c))),
+        bal_c = bal_c - ev.amt
+      where member_id = ev.mid;
 
     elsif ev.etype = 'exit' then
       update st set payout_c = bal_c, realized_c = bal_c - contrib_c,
@@ -343,10 +367,11 @@ begin
     select exited into v_exited from member_state where member_id = new.member_id;
     if coalesce(v_exited,false) then raise exception 'Member already exited.'; end if;
     if new.type = 'withdrawal' then
-      select greatest(0, balance_c - contributed_c) into v_avail
-        from member_state where member_id = new.member_id;
+      -- withdrawals may draw profit AND capital, up to the full current balance;
+      -- the member stays active. Full cash-out + archive is still Exit.
+      select balance_c into v_avail from member_state where member_id = new.member_id;
       if new.amount_c > coalesce(v_avail,0) then
-        raise exception 'Withdrawals are profit-only. Available profit: % cents. Use Exit to return capital.', coalesce(v_avail,0);
+        raise exception 'Withdrawal exceeds the member''s current balance: % cents. Use Exit for a full cash-out.', coalesce(v_avail,0);
       end if;
     end if;
     if new.type in ('deposit','withdrawal') and (new.amount_c is null or new.amount_c <= 0) then
@@ -558,14 +583,52 @@ drop policy if exists audit_read on audit_log;
 create policy audit_read on audit_log for select using (me_is_admin());
 
 -- ============================================================
--- HARDENING — recompute_pool is heavy (full replay) and was callable by
--- any logged-in user (or anon) via the auto-exposed /rpc endpoint.
--- Triggers and restore_backup still run it fine (they execute as owner).
+-- HARDENING — every function above is SECURITY DEFINER and PostgREST
+-- auto-exposes each at /rest/v1/rpc/<name> with EXECUTE granted to
+-- anon+authenticated by default. We tighten that by category:
+--
+--  * Trigger bodies + the heavy replay are never meant to be RPC-callable
+--    at all — revoke from everyone. (Triggers still fire: they run as the
+--    table owner, not as the API caller, so table DML is unaffected.)
+--    This closes the hole where trg_recompute() — the trigger wrapper —
+--    could invoke the otherwise-locked recompute_pool() via RPC.
+--
+--  * Admin actions are called by the admin, who is just an 'authenticated'
+--    user distinguished by the admins table (not a DB role). They must stay
+--    EXECUTE-able by authenticated and are gated by an internal me_is_admin()
+--    check; we deny anon.
+--
+--  * Sign-in helpers (claim_admin, link_member) are only ever called with a
+--    live session — deny anon.
+--
+--  * me_is_admin() is DELIBERATELY left callable by anon+authenticated: it is
+--    referenced by every RLS policy below and is evaluated as the querying
+--    role, so revoking it would break all member/admin queries. Calling it
+--    directly only tells you whether YOU are an admin — no data leak.
 -- ============================================================
-revoke execute on function recompute_pool() from public, anon, authenticated;
-revoke execute on function purge_member(uuid) from anon;
-revoke execute on function restore_backup(jsonb) from anon;
-revoke execute on function make_admin(text) from anon;
+-- trigger bodies + heavy replay: no API caller should reach these
+revoke execute on function recompute_pool()      from public, anon, authenticated;
+revoke execute on function trg_recompute()       from public, anon, authenticated;
+revoke execute on function audit_row()           from public, anon, authenticated;
+revoke execute on function validate_event()      from public, anon, authenticated;
+revoke execute on function guard_member_delete() from public, anon, authenticated;
+revoke execute on function guard_last_admin()    from public, anon, authenticated;
+-- admin actions + sign-in helpers: revoke the default PUBLIC grant (which is
+-- what anon inherits — revoking the anon role alone leaves PUBLIC in place and
+-- does nothing), then grant back to authenticated only. Admin actions stay
+-- gated by their internal me_is_admin() check.
+revoke execute on function make_admin(text)      from public;
+revoke execute on function restore_backup(jsonb) from public;
+revoke execute on function purge_member(uuid)    from public;
+revoke execute on function claim_admin()         from public;
+revoke execute on function link_member()         from public;
+revoke execute on function admin_member_ids()    from public;
+grant  execute on function make_admin(text)      to authenticated;
+grant  execute on function restore_backup(jsonb) to authenticated;
+grant  execute on function purge_member(uuid)    to authenticated;
+grant  execute on function claim_admin()         to authenticated;
+grant  execute on function link_member()         to authenticated;
+grant  execute on function admin_member_ids()    to authenticated;
 
 -- ============================================================
 -- REALTIME — open devices refresh instantly when data changes.

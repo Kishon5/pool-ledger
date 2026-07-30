@@ -23,6 +23,28 @@ A single-file web app for tracking a shared trading pool — members, deposits, 
 
 The Supabase anon key in the file is public by design — every read/write is gated by row-level security policies defined in `schema.sql`.
 
+## Security setup (do this before going live)
+
+The anon key ships in the public HTML, so **all** security rests on Postgres RLS
+plus your Supabase Auth settings. `schema.sql` already locks down RLS and function
+grants; these three Auth settings are yours to set in the dashboard:
+
+1. **Turn off open signups** — Authentication → Providers → Email → disable
+   "Allow new users to sign up". Because the *first* person to sign in becomes the
+   admin (`claim_admin`), an open signup lets a stranger who loads the page before
+   you seize admin. With signups off, you create every login yourself
+   (Authentication → Users → Add user), which matches the admin-managed-password
+   model anyway. Do this **before** you first open the app.
+2. **Require email confirmation** — Authentication → Providers → Email → enable
+   "Confirm email". Members are linked to their data by matching email
+   (`link_member`); without confirmation, someone could register a member's email
+   they don't own and read that member's balance and history.
+3. **Enable leaked-password protection** — Authentication → Passwords → turn on the
+   HaveIBeenPwned check so breached passwords are rejected.
+
+Run `schema.sql` in full (it is idempotent) after any pull — the hardening lives in
+its `HARDENING` block and re-applies cleanly.
+
 ## Architecture
 
 - **`index.html`** — the whole app: vanilla JS + CSS, no build step

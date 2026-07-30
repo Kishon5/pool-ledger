@@ -237,6 +237,7 @@
   .tag.member{background:var(--chip);color:var(--accent);background:color-mix(in srgb,var(--accent) 15%,transparent)}
   .tag.admin,.tag.other{background:var(--chip);color:var(--soft)}
   .tag.bonus{background:var(--chip);color:var(--brass);background:color-mix(in srgb,var(--brass) 18%,transparent)}
+  .tag.role{background:color-mix(in srgb,var(--accent) 18%,transparent);color:var(--accent);vertical-align:2px}
   .chip{font:600 12px var(--font);padding:7px 13px;border-radius:20px;cursor:pointer;
     border:1px solid var(--line);background:transparent;color:var(--soft);transition:all .15s}
   .chip:hover{border-color:color-mix(in srgb,var(--accent) 45%,var(--line));color:var(--ink)}
@@ -614,7 +615,13 @@ function replayEngine(members, events){
       parts.forEach((m,i)=>st[m.id].bal+=shares[i]);
     }
     else if(ev.kind==="deposit"){ const s=st[ev.mid]; if(s){s.bal+=ev.amt;s.contrib+=ev.amt;} }
-    else if(ev.kind==="withdrawal"){ const s=st[ev.mid]; if(s) s.bal-=ev.amt; }
+    else if(ev.kind==="withdrawal"){ const s=st[ev.mid]; if(s){
+      // profit first, then capital — mirrors recompute_pool exactly so the
+      // trade preview stays identical to what saving produces. contrib floors
+      // at 0 (only bites a backdated over-withdrawal, which also warns).
+      const cap = Math.max(0, ev.amt - Math.max(0, s.bal - s.contrib));
+      s.contrib = Math.max(0, s.contrib - cap); s.bal -= ev.amt;
+    } }
     else if(ev.kind==="exit"){ const s=st[ev.mid]; if(s){s.payout=s.bal;s.realized=s.bal-s.contrib;s.bal=0;s.exited=true;} }
     else if(ev.kind==="bonus"){ bonus+=ev.amt; }
   }
@@ -721,7 +728,15 @@ async function signOut(){ sessionEnded = true; await sb.auth.signOut(); location
 
 /* ───────────────────────── ADMIN ───────────────────────── */
 let A = { tab:"overview", filter:"all", auditFilter:"all", members:[], state:{}, pool:null, warns:[],
-          events:[], hist:[], audit:[], openMoney:null, openHist:{}, histCache:{}, histFilter:{}, showEvents:200 };
+          events:[], hist:[], audit:[], adminMemberIds:new Set(),
+          openMoney:null, openHist:{}, histCache:{}, histFilter:{}, showEvents:200 };
+/* Which member rows belong to a pool admin — computed server-side by
+   admin_member_ids() (matches on the login link OR, for an admin whose
+   member row was never linked, on email). Admin-only, so members never learn
+   who the admin is. */
+const isAdminMember = m => A.adminMemberIds.has(m.id);
+const adminBadge = m => isAdminMember(m)
+  ? ` <span class="tag role" title="This member's login is also a pool admin">admin</span>` : "";
 
 /* Supabase/PostgREST caps every select at 1000 rows. Page through so a
    long-running ledger is never silently truncated — a capped events list
@@ -738,7 +753,7 @@ async function fetchAll(build){
 }
 
 async function loadAdmin(){
-  const [m, ms, ps, w, ev, ph, au] = await Promise.all([
+  const [m, ms, ps, w, ev, ph, au, ad] = await Promise.all([
     sb.from("members").select("*").order("joined_at"),
     sb.from("member_state").select("*"),
     sb.from("pool_state").select("*").maybeSingle(),
@@ -746,10 +761,13 @@ async function loadAdmin(){
     fetchAll(()=>sb.from("events").select("*").order("order_time",{ascending:false}).order("created_at",{ascending:false})),
     fetchAll(()=>sb.from("pool_history").select("t,pool_c").order("t")),
     sb.from("audit_log").select("*").order("id",{ascending:false}).limit(300),
+    sb.rpc("admin_member_ids"),
   ]);
-  for(const r of [m,ms,ps,w,ev,ph,au]) if(r.error) return err(r.error);
+  for(const r of [m,ms,ps,w,ev,ph,au,ad]) if(r.error) return err(r.error);
   A.members=m.data; A.state=Object.fromEntries(ms.data.map(s=>[s.member_id,s]));
   A.pool=ps.data; A.warns=w.data; A.events=ev.data; A.hist=ph.data; A.audit=au.data;
+  // setof-uuid may arrive as bare strings or as {admin_member_ids:…} rows
+  A.adminMemberIds=new Set((ad.data||[]).map(r=>typeof r==="string"?r:(r.admin_member_ids??r.id??Object.values(r)[0])));
   A.histCache = {};           // balances may have changed — refetch on expand
   lastSync = Date.now();
 }
@@ -926,7 +944,7 @@ function vMembers(){
     const histOpen = !!A.openHist[m.id];
     return `<div class="panel">
       <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px">
-        <div><b style="font-size:16px">${esc(m.name)}</b>
+        <div><b style="font-size:16px">${esc(m.name)}</b>${adminBadge(m)}
           <div class="muted" style="font-size:12px">Joined ${fmtT(m.joined_at)}${m.email?` · ${esc(m.email)}`:" · no login"}</div></div>
         <div style="text-align:right">
           <div class="mono ${profit>=0?'gain':'loss'}" style="font-size:12px">${fmt(profit,true)} profit · ${pct(profit,s.contributed_c)} return</div></div>
@@ -938,7 +956,7 @@ function vMembers(){
       </div>
       <div style="display:flex;gap:6px;margin-top:12px;flex-wrap:wrap">
         <button class="btn small ${A.openMoney===m.id+':deposit'?'primary':''}" onclick="toggleMoney('${m.id}','deposit')">Deposit</button>
-        <button class="btn small ${A.openMoney===m.id+':withdraw'?'primary':''}" onclick="toggleMoney('${m.id}','withdraw')">Withdraw profit</button>
+        <button class="btn small ${A.openMoney===m.id+':withdraw'?'primary':''}" onclick="toggleMoney('${m.id}','withdraw')">Withdraw</button>
         <button class="btn small" onclick="doExit('${m.id}',event)">Exit</button>
         <button class="btn small" onclick="editCap('${m.id}',event)">Edit starting capital</button>
         <button class="btn small ${histOpen?'primary':''}" onclick="toggleHist('${m.id}')">${histOpen?"Hide history ▴":"History ▾"}</button>
@@ -962,7 +980,7 @@ function moneyForm(m, kind){
       <button class="btn" onclick="A.openMoney=null;drawAdmin()">Cancel</button>
     </div></div>`;
   return `<div class="formbox">
-    <div class="label">Withdraw profit for ${esc(m.name)} — available ${fmt(avail)} (profit only; capital returns via Exit)</div>
+    <div class="label">Withdraw for ${esc(m.name)} — balance ${fmt(s.balance_c)} (${fmt(avail)} profit, then capital; full cash-out uses Exit)</div>
     <div class="row" style="margin-top:6px">
       <label><div class="label">Member receives ($)</div><input id="amt-${m.id}" type="number" step="0.01" oninput="updFeePreview('${m.id}')"></label>
       <label><div class="label">Broker fee (%)</div><input id="feerate-${m.id}" type="number" step="0.01" min="0" max="99.99" value="${FEE_RATE_PCT}" oninput="updFeePreview('${m.id}')" style="width:90px"></label>
@@ -990,12 +1008,18 @@ function updFeePreview(id){
   const p = feePlan(id);
   if(!p.grossC){ box.innerHTML = esc(p.msg || "Enter the amount the member should receive in hand — the broker's withdrawal fee is added on top."); return; }
   const m = A.members.find(x=>x.id===id), s = A.state[id]||{balance_c:0,contributed_c:0};
-  const avail = Math.max(0, s.balance_c - s.contributed_c);
+  const avail = Math.max(0, s.balance_c - s.contributed_c);   // withdrawable profit
+  // the GROSS (what leaves the pool) is split profit-first, then capital
+  const over = p.grossC > s.balance_c;
+  const fromProfit = Math.min(p.grossC, avail);
+  const fromCapital = p.grossC - fromProfit;
   box.innerHTML = `Withdraw <b class="mono">${fmt(p.grossC)}</b> from the broker
     → fee <b class="mono">${fmt(p.feeC)}</b> ${p.minApplied?`(minimum ${fmt(p.minC)} fee applies)`:`(${p.rate}% of gross)`}
     → ${esc(m?.name||"member")} receives <b class="mono">${fmt(p.netC)}</b>.
     Additional funds needed on top: <b class="mono">${fmt(p.feeC)}</b>.
-    ${p.grossC>avail?`<span style="color:var(--warn)">The gross ${fmt(p.grossC)} exceeds their available profit (${fmt(avail)}) — the database will reject it. Largest possible in-hand amount right now: <b class="mono">${fmt(Math.max(0, avail - brokerFee(avail, p.rate, p.minC)))}</b>.</span>`:""}`;
+    ${over
+      ? `<div style="margin-top:4px;color:var(--warn)">The gross ${fmt(p.grossC)} exceeds ${esc(m?.name||"the member")}'s balance (${fmt(s.balance_c)}) — the database will reject it. Largest possible in-hand amount right now: <b class="mono">${fmt(Math.max(0, s.balance_c - brokerFee(s.balance_c, p.rate, p.minC)))}</b>.</div>`
+      : `<div style="margin-top:4px">Comes from: <b class="mono gain">${fmt(fromProfit)}</b> profit${fromCapital>0?` + <b class="mono">${fmt(fromCapital)}</b> capital (Capital in → ${fmt(s.contributed_c-fromCapital)})`:""}.</div>`}`;
 }
 function toggleMoney(id, kind){
   const key = id+":"+kind;
@@ -1030,8 +1054,11 @@ async function saveMoney(id, kind, ev){
   if(!p.grossC) return toast("Enter a positive amount.");
   const s = A.state[id]||{balance_c:0,contributed_c:0};
   const avail = Math.max(0, s.balance_c - s.contributed_c);
-  if(p.grossC > avail && !confirm(
-    `Including the ${fmt(p.feeC)} broker fee, this withdrawal takes ${fmt(p.grossC)} from the pool — MORE than ${m.name}'s available profit (${fmt(avail)}). The database will likely reject it. Try anyway?`)) return;
+  const fromCapital = Math.max(0, p.grossC - avail);
+  if(p.grossC > s.balance_c && !confirm(
+    `Including the ${fmt(p.feeC)} broker fee, this withdrawal takes ${fmt(p.grossC)} from the pool — MORE than ${m.name}'s balance (${fmt(s.balance_c)}). The database will reject it. Try anyway?`)) return;
+  if(fromCapital>0 && p.grossC<=s.balance_c && !confirm(
+    `This withdrawal takes ${fmt(p.grossC)} from the pool: ${fmt(avail)} profit + ${fmt(fromCapital)} capital. ${m.name}'s Capital in will drop from ${fmt(s.contributed_c)} to ${fmt(s.contributed_c-fromCapital)}. Continue?`)) return;
   await once(ev, async ()=>{
     const { error } = await sb.from("events").insert({
       type:"withdrawal", member_id:id, amount_c:p.grossC, fee_c:p.feeC, order_time:t });
@@ -1741,7 +1768,7 @@ function vArchive(){
   ${exited.length? exited.map(m=>{const s=A.state[m.id];return `
     <div style="padding:12px 0;border-bottom:1px solid var(--line)">
       <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px">
-        <div><b>${esc(m.name)}</b><div class="muted" style="font-size:12px">Joined ${fmtT(m.joined_at)} · Exited ${s.exited_at?fmtT(s.exited_at):"—"}</div></div>
+        <div><b>${esc(m.name)}</b>${adminBadge(m)}<div class="muted" style="font-size:12px">Joined ${fmtT(m.joined_at)} · Exited ${s.exited_at?fmtT(s.exited_at):"—"}</div></div>
         <div class="mono" style="text-align:right;font-size:13px">Paid out ${fmt(s.payout_c)}<br>
           <span class="${s.realized_c>=0?'gain':'loss'}">Realized ${fmt(s.realized_c,true)}</span></div></div>
       <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
@@ -1830,7 +1857,7 @@ async function memberApp(mid){
     return;
   }
   lastSync = Date.now();
-  const s = st.data, profit = s.balance_c - s.contributed_c, avail = Math.max(0,profit);
+  const s = st.data, profit = s.balance_c - s.contributed_c;
   // daily TRADING P&L — sum of this member's trade shares per local day.
   // (Diffing end-of-day balances would count deposits/withdrawals as "P&L".)
   const pnlByDay = {};
@@ -1864,7 +1891,7 @@ async function memberApp(mid){
     <div class="panel"><div class="label">Current balance</div><span class="mono big" title="${fmt(s.balance_c)}">${compact(s.balance_c)}</span></div>
     <div class="panel"><div class="label">Capital in</div><span class="mono big" title="${fmt(s.contributed_c)}">${compact(s.contributed_c)}</span></div>
     <div class="panel"><div class="label">Your profit</div><span class="mono big ${profit>=0?'gain':'loss'}" title="${fmt(profit,true)}">${profit<0?"-":"+"}${compact(Math.abs(profit))}</span></div>
-    <div class="panel"><div class="label">Available to withdraw</div><span class="mono big" title="${fmt(avail)}">${compact(avail)}</span></div>
+    <div class="panel"><div class="label">Available to withdraw</div><span class="mono big" title="${fmt(s.balance_c)} — full balance (capital + profit)">${compact(s.balance_c)}</span></div>
     <div class="panel"><div class="label">Return on capital</div><span class="mono big ${profit>=0?'gain':'loss'}">${pct(profit,s.contributed_c)}</span></div>
   </div>
   <div class="panel"><div class="label">Your balance over time</div>${spark(hist.data.map(h=>h.balance_c), null, {labels:hist.data.map(h=>fmtT(h.t))})}</div>
