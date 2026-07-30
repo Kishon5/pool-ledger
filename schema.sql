@@ -276,12 +276,18 @@ begin
 
     elsif ev.etype = 'withdrawal' then
       select name into v_name from members where id = ev.mid;
-      if exists (select 1 from st where member_id = ev.mid
-                 and ev.amt > greatest(0, bal_c - contrib_c)) then
+      -- withdrawal drains profit first, then dips into capital. The part beyond
+      -- available profit (bal-contrib) reduces contributed capital, so
+      -- profit = bal - contrib never goes negative from a withdrawal. A single
+      -- UPDATE so both expressions read the SAME pre-update bal_c/contrib_c.
+      if exists (select 1 from st where member_id = ev.mid and ev.amt > bal_c) then
         insert into replay_warnings(event_id,msg) values (ev.eid,
-          'Withdrawal for '||v_name||' exceeds their profit at that point in history — likely a later backdated edit.');
+          'Withdrawal for '||v_name||' exceeds their balance at that point in history — balance went negative.');
       end if;
-      update st set bal_c = bal_c - ev.amt where member_id = ev.mid;
+      update st set
+        contrib_c = contrib_c - greatest(0, ev.amt - greatest(0, bal_c - contrib_c)),
+        bal_c = bal_c - ev.amt
+      where member_id = ev.mid;
 
     elsif ev.etype = 'exit' then
       update st set payout_c = bal_c, realized_c = bal_c - contrib_c,
@@ -343,10 +349,11 @@ begin
     select exited into v_exited from member_state where member_id = new.member_id;
     if coalesce(v_exited,false) then raise exception 'Member already exited.'; end if;
     if new.type = 'withdrawal' then
-      select greatest(0, balance_c - contributed_c) into v_avail
-        from member_state where member_id = new.member_id;
+      -- withdrawals may draw profit AND capital, up to the full current balance;
+      -- the member stays active. Full cash-out + archive is still Exit.
+      select balance_c into v_avail from member_state where member_id = new.member_id;
       if new.amount_c > coalesce(v_avail,0) then
-        raise exception 'Withdrawals are profit-only. Available profit: % cents. Use Exit to return capital.', coalesce(v_avail,0);
+        raise exception 'Withdrawal exceeds the member''s current balance: % cents. Use Exit for a full cash-out.', coalesce(v_avail,0);
       end if;
     end if;
     if new.type in ('deposit','withdrawal') and (new.amount_c is null or new.amount_c <= 0) then
