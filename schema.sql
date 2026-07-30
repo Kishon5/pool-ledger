@@ -173,6 +173,24 @@ begin
   return mid;
 end $$;
 
+-- which member rows belong to a pool admin — for the "admin" badge in the
+-- admin UI. Matches on the login link, OR (for an admin whose member row was
+-- never linked, e.g. because admins skip link_member at sign-in) on email.
+-- Admin-only: a non-admin caller gets an empty set, so members never learn
+-- who the admin is. Reads auth.users, so it must be SECURITY DEFINER.
+create or replace function admin_member_ids() returns setof uuid
+language plpgsql security definer set search_path = public stable as $$
+begin
+  if not me_is_admin() then return; end if;
+  return query
+    select m.id from members m
+    where (m.user_id is not null
+           and exists (select 1 from admins a where a.user_id = m.user_id))
+       or (m.email is not null
+           and exists (select 1 from admins a join auth.users u on u.id = a.user_id
+                       where lower(u.email) = lower(m.email)));
+end $$;
+
 -- ============================================================
 -- THE CANONICAL REPLAY ENGINE — the only place balances are computed
 -- (DB2 version — the newest)
@@ -604,11 +622,13 @@ revoke execute on function restore_backup(jsonb) from public;
 revoke execute on function purge_member(uuid)    from public;
 revoke execute on function claim_admin()         from public;
 revoke execute on function link_member()         from public;
+revoke execute on function admin_member_ids()    from public;
 grant  execute on function make_admin(text)      to authenticated;
 grant  execute on function restore_backup(jsonb) to authenticated;
 grant  execute on function purge_member(uuid)    to authenticated;
 grant  execute on function claim_admin()         to authenticated;
 grant  execute on function link_member()         to authenticated;
+grant  execute on function admin_member_ids()    to authenticated;
 
 -- ============================================================
 -- REALTIME — open devices refresh instantly when data changes.

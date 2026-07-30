@@ -237,6 +237,7 @@
   .tag.member{background:var(--chip);color:var(--accent);background:color-mix(in srgb,var(--accent) 15%,transparent)}
   .tag.admin,.tag.other{background:var(--chip);color:var(--soft)}
   .tag.bonus{background:var(--chip);color:var(--brass);background:color-mix(in srgb,var(--brass) 18%,transparent)}
+  .tag.role{background:color-mix(in srgb,var(--accent) 18%,transparent);color:var(--accent);vertical-align:2px}
   .chip{font:600 12px var(--font);padding:7px 13px;border-radius:20px;cursor:pointer;
     border:1px solid var(--line);background:transparent;color:var(--soft);transition:all .15s}
   .chip:hover{border-color:color-mix(in srgb,var(--accent) 45%,var(--line));color:var(--ink)}
@@ -726,7 +727,15 @@ async function signOut(){ sessionEnded = true; await sb.auth.signOut(); location
 
 /* ───────────────────────── ADMIN ───────────────────────── */
 let A = { tab:"overview", filter:"all", auditFilter:"all", members:[], state:{}, pool:null, warns:[],
-          events:[], hist:[], audit:[], openMoney:null, openHist:{}, histCache:{}, histFilter:{}, showEvents:200 };
+          events:[], hist:[], audit:[], adminMemberIds:new Set(),
+          openMoney:null, openHist:{}, histCache:{}, histFilter:{}, showEvents:200 };
+/* Which member rows belong to a pool admin — computed server-side by
+   admin_member_ids() (matches on the login link OR, for an admin whose
+   member row was never linked, on email). Admin-only, so members never learn
+   who the admin is. */
+const isAdminMember = m => A.adminMemberIds.has(m.id);
+const adminBadge = m => isAdminMember(m)
+  ? ` <span class="tag role" title="This member's login is also a pool admin">admin</span>` : "";
 
 /* Supabase/PostgREST caps every select at 1000 rows. Page through so a
    long-running ledger is never silently truncated — a capped events list
@@ -743,7 +752,7 @@ async function fetchAll(build){
 }
 
 async function loadAdmin(){
-  const [m, ms, ps, w, ev, ph, au] = await Promise.all([
+  const [m, ms, ps, w, ev, ph, au, ad] = await Promise.all([
     sb.from("members").select("*").order("joined_at"),
     sb.from("member_state").select("*"),
     sb.from("pool_state").select("*").maybeSingle(),
@@ -751,10 +760,13 @@ async function loadAdmin(){
     fetchAll(()=>sb.from("events").select("*").order("order_time",{ascending:false}).order("created_at",{ascending:false})),
     fetchAll(()=>sb.from("pool_history").select("t,pool_c").order("t")),
     sb.from("audit_log").select("*").order("id",{ascending:false}).limit(300),
+    sb.rpc("admin_member_ids"),
   ]);
-  for(const r of [m,ms,ps,w,ev,ph,au]) if(r.error) return err(r.error);
+  for(const r of [m,ms,ps,w,ev,ph,au,ad]) if(r.error) return err(r.error);
   A.members=m.data; A.state=Object.fromEntries(ms.data.map(s=>[s.member_id,s]));
   A.pool=ps.data; A.warns=w.data; A.events=ev.data; A.hist=ph.data; A.audit=au.data;
+  // setof-uuid may arrive as bare strings or as {admin_member_ids:…} rows
+  A.adminMemberIds=new Set((ad.data||[]).map(r=>typeof r==="string"?r:(r.admin_member_ids??r.id??Object.values(r)[0])));
   A.histCache = {};           // balances may have changed — refetch on expand
   lastSync = Date.now();
 }
@@ -931,7 +943,7 @@ function vMembers(){
     const histOpen = !!A.openHist[m.id];
     return `<div class="panel">
       <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px">
-        <div><b style="font-size:16px">${esc(m.name)}</b>
+        <div><b style="font-size:16px">${esc(m.name)}</b>${adminBadge(m)}
           <div class="muted" style="font-size:12px">Joined ${fmtT(m.joined_at)}${m.email?` · ${esc(m.email)}`:" · no login"}</div></div>
         <div style="text-align:right">
           <div class="mono ${profit>=0?'gain':'loss'}" style="font-size:12px">${fmt(profit,true)} profit · ${pct(profit,s.contributed_c)} return</div></div>
@@ -1755,7 +1767,7 @@ function vArchive(){
   ${exited.length? exited.map(m=>{const s=A.state[m.id];return `
     <div style="padding:12px 0;border-bottom:1px solid var(--line)">
       <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px">
-        <div><b>${esc(m.name)}</b><div class="muted" style="font-size:12px">Joined ${fmtT(m.joined_at)} · Exited ${s.exited_at?fmtT(s.exited_at):"—"}</div></div>
+        <div><b>${esc(m.name)}</b>${adminBadge(m)}<div class="muted" style="font-size:12px">Joined ${fmtT(m.joined_at)} · Exited ${s.exited_at?fmtT(s.exited_at):"—"}</div></div>
         <div class="mono" style="text-align:right;font-size:13px">Paid out ${fmt(s.payout_c)}<br>
           <span class="${s.realized_c>=0?'gain':'loss'}">Realized ${fmt(s.realized_c,true)}</span></div></div>
       <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
