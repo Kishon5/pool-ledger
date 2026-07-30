@@ -613,16 +613,17 @@ revoke execute on function audit_row()           from public, anon, authenticate
 revoke execute on function validate_event()      from public, anon, authenticated;
 revoke execute on function guard_member_delete() from public, anon, authenticated;
 revoke execute on function guard_last_admin()    from public, anon, authenticated;
--- admin actions + sign-in helpers: revoke the default PUBLIC grant (which is
--- what anon inherits — revoking the anon role alone leaves PUBLIC in place and
--- does nothing), then grant back to authenticated only. Admin actions stay
--- gated by their internal me_is_admin() check.
-revoke execute on function make_admin(text)      from public;
-revoke execute on function restore_backup(jsonb) from public;
-revoke execute on function purge_member(uuid)    from public;
-revoke execute on function claim_admin()         from public;
-revoke execute on function link_member()         from public;
-revoke execute on function admin_member_ids()    from public;
+-- admin actions + sign-in helpers: revoke the default PUBLIC grant AND the
+-- direct anon grant (newer Supabase projects add EXECUTE to anon/authenticated
+-- via default privileges when a function is created, so revoking PUBLIC alone
+-- leaves anon able to call it), then grant back to authenticated only. Admin
+-- actions stay gated by their internal me_is_admin() check.
+revoke execute on function make_admin(text)      from public, anon;
+revoke execute on function restore_backup(jsonb) from public, anon;
+revoke execute on function purge_member(uuid)    from public, anon;
+revoke execute on function claim_admin()         from public, anon;
+revoke execute on function link_member()         from public, anon;
+revoke execute on function admin_member_ids()    from public, anon;
 grant  execute on function make_admin(text)      to authenticated;
 grant  execute on function restore_backup(jsonb) to authenticated;
 grant  execute on function purge_member(uuid)    to authenticated;
