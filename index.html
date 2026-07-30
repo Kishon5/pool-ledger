@@ -617,9 +617,10 @@ function replayEngine(members, events){
     else if(ev.kind==="deposit"){ const s=st[ev.mid]; if(s){s.bal+=ev.amt;s.contrib+=ev.amt;} }
     else if(ev.kind==="withdrawal"){ const s=st[ev.mid]; if(s){
       // profit first, then capital — mirrors recompute_pool exactly so the
-      // trade preview stays identical to what saving produces
+      // trade preview stays identical to what saving produces. contrib floors
+      // at 0 (only bites a backdated over-withdrawal, which also warns).
       const cap = Math.max(0, ev.amt - Math.max(0, s.bal - s.contrib));
-      s.contrib -= cap; s.bal -= ev.amt;
+      s.contrib = Math.max(0, s.contrib - cap); s.bal -= ev.amt;
     } }
     else if(ev.kind==="exit"){ const s=st[ev.mid]; if(s){s.payout=s.bal;s.realized=s.bal-s.contrib;s.bal=0;s.exited=true;} }
     else if(ev.kind==="bonus"){ bonus+=ev.amt; }
@@ -1856,7 +1857,7 @@ async function memberApp(mid){
     return;
   }
   lastSync = Date.now();
-  const s = st.data, profit = s.balance_c - s.contributed_c, avail = Math.max(0,profit);
+  const s = st.data, profit = s.balance_c - s.contributed_c;
   // daily TRADING P&L — sum of this member's trade shares per local day.
   // (Diffing end-of-day balances would count deposits/withdrawals as "P&L".)
   const pnlByDay = {};
@@ -1890,7 +1891,7 @@ async function memberApp(mid){
     <div class="panel"><div class="label">Current balance</div><span class="mono big" title="${fmt(s.balance_c)}">${compact(s.balance_c)}</span></div>
     <div class="panel"><div class="label">Capital in</div><span class="mono big" title="${fmt(s.contributed_c)}">${compact(s.contributed_c)}</span></div>
     <div class="panel"><div class="label">Your profit</div><span class="mono big ${profit>=0?'gain':'loss'}" title="${fmt(profit,true)}">${profit<0?"-":"+"}${compact(Math.abs(profit))}</span></div>
-    <div class="panel"><div class="label">Available to withdraw</div><span class="mono big" title="${fmt(avail)}">${compact(avail)}</span></div>
+    <div class="panel"><div class="label">Available to withdraw</div><span class="mono big" title="${fmt(s.balance_c)} — full balance (capital + profit)">${compact(s.balance_c)}</span></div>
     <div class="panel"><div class="label">Return on capital</div><span class="mono big ${profit>=0?'gain':'loss'}">${pct(profit,s.contributed_c)}</span></div>
   </div>
   <div class="panel"><div class="label">Your balance over time</div>${spark(hist.data.map(h=>h.balance_c), null, {labels:hist.data.map(h=>fmtT(h.t))})}</div>

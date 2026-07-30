@@ -303,7 +303,7 @@ begin
           'Withdrawal for '||v_name||' exceeds their balance at that point in history — balance went negative.');
       end if;
       update st set
-        contrib_c = contrib_c - greatest(0, ev.amt - greatest(0, bal_c - contrib_c)),
+        contrib_c = greatest(0, contrib_c - greatest(0, ev.amt - greatest(0, bal_c - contrib_c))),
         bal_c = bal_c - ev.amt
       where member_id = ev.mid;
 
