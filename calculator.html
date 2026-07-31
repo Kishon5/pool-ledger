@@ -196,6 +196,7 @@ footer.foot{color:var(--muted);font-size:12px;text-align:center;padding:22px 14p
   <nav class="tabs" role="tablist">
     <button role="tab" data-tab="calc"    aria-selected="true">Calculator</button>
     <button role="tab" data-tab="target"  aria-selected="false">Target</button>
+    <button role="tab" data-tab="withdraw" aria-selected="false">Withdraw</button>
     <button role="tab" data-tab="table"   aria-selected="false">Table</button>
     <button role="tab" data-tab="compare" aria-selected="false">Compare</button>
     <button role="tab" data-tab="history" aria-selected="false">History</button>
@@ -317,6 +318,61 @@ footer.foot{color:var(--muted);font-size:12px;text-align:center;padding:22px 14p
     <button class="btn wide" id="targetBtn">Calculate target</button>
   </div>
   <div id="targetOut" class="hidden"></div>
+</section>
+
+<!-- ============================= WITHDRAWAL ============================ -->
+<section id="tab-withdraw" class="hidden">
+  <div class="card">
+    <h2>Withdrawal planner</h2>
+    <p class="sub">Enter what you want <b>in your hand</b>. This works backwards through the fee to the balance you must reach, then shows the trades, the days and the full growth table — stopping on the exact trade that gets you there.</p>
+    <div class="grid">
+      <div class="field">
+        <label for="w-capital">Current capital</label>
+        <input id="w-capital" type="number" inputmode="decimal" min="0" step="any" value="1000">
+      </div>
+      <div class="field">
+        <label for="w-need">Amount needed in hand</label>
+        <input id="w-need" type="number" inputmode="decimal" min="0" step="any" value="2000">
+      </div>
+      <div class="field">
+        <label for="w-profit">Profit per trade %</label>
+        <input id="w-profit" type="number" inputmode="decimal" step="any" value="0.85">
+      </div>
+      <div class="field">
+        <label for="w-trades">Trades per day</label>
+        <input id="w-trades" type="number" inputmode="numeric" min="1" step="1" value="4">
+      </div>
+      <div class="field">
+        <label for="w-fee">Fee %</label>
+        <input id="w-fee" type="number" inputmode="decimal" min="0" max="100" step="any" value="25">
+      </div>
+      <div class="field">
+        <label for="w-minfee">Minimum fee <span class="hint">(flat, optional)</span></label>
+        <input id="w-minfee" type="number" inputmode="decimal" min="0" step="any" value="0">
+      </div>
+      <div class="field">
+        <label for="w-basis">Fee charged on</label>
+        <select id="w-basis">
+          <option value="gross">The withdrawal amount</option>
+          <option value="profit">Profit only</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="w-mode">Take out</label>
+        <select id="w-mode">
+          <option value="profit">Profit only — keep my capital trading</option>
+          <option value="all">Everything — close the account</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="w-start">Start date <span class="hint">(= Day 1)</span></label>
+        <input id="w-start" type="date">
+      </div>
+    </div>
+    <hr class="hr">
+    <button class="btn wide" id="withdrawBtn">Calculate withdrawal</button>
+  </div>
+  <div id="withdrawOut" class="hidden"></div>
 </section>
 
 <!-- =============================== TABLE ============================== -->
@@ -448,8 +504,10 @@ const fmtDate  = d => DOW[d.getUTCDay()] + ", " + fmtDateS(d);
 const MAX_TRADES = 200000;
 
 function simulate(inp){
-  const { capitalCents, profitPct, tradesPerDay, days, compound, feePct, startDate } = inp;
-  const total = tradesPerDay * days;
+  const { capitalCents, profitPct, tradesPerDay, compound, feePct, startDate, maxTrades } = inp;
+  /* maxTrades stops the run on an exact trade, so the last day may be partial. */
+  const dayCount = maxTrades ? Math.max(1, Math.ceil(maxTrades / tradesPerDay)) : inp.days;
+  const total = maxTrades || tradesPerDay * dayCount;
   if (total > MAX_TRADES) throw new Error("That is " + total.toLocaleString("en-US") +
     " trades. Keep days × trades/day at or below " + MAX_TRADES.toLocaleString("en-US") + ".");
 
@@ -458,10 +516,11 @@ function simulate(inp){
   const rows = [];
   let bal = capitalCents, n = 0;
 
-  for (let d = 1; d <= days; d++){
+  for (let d = 1; d <= dayCount; d++){
     const dayStart = bal;
     const trades = [];
-    for (let t = 1; t <= tradesPerDay; t++){
+    const todays = (maxTrades && d === dayCount) ? total - (dayCount - 1) * tradesPerDay : tradesPerDay;
+    for (let t = 1; t <= todays; t++){
       const s = bal;
       const end = compound ? Math.round(s * (1 + rate)) : s + flat;
       bal = end; n++;
@@ -492,8 +551,56 @@ function simulate(inp){
     roi:    capitalCents ? profitCents / capitalCents * 100 : 0,
     netRoi: capitalCents ? netProfit   / capitalCents * 100 : 0,
     multiple:    capitalCents ? bal / capitalCents : 0,
-    endDate: addDays(startDate, days - 1),
+    endDate: addDays(startDate, dayCount - 1),
   };
+}
+
+/* -------------------------- withdrawal solver --------------------------
+   You say what you want in hand; this works back to the balance you must
+   reach. `basis` is which number the fee is charged on, `mode` is whether
+   you take out only profit (capital keeps working) or close the account.
+   fee = max(pct of basis, flat minimum).                                  */
+function solveWithdrawal(o){
+  const { capitalCents: C, needCents: need, feePct, minFeeCents: mf, basis, mode } = o;
+  const f = Math.min(0.999999, feePct / 100);
+
+  const pick = (viaPct, feeOfPct) => {
+    /* the flat minimum wins whenever the percentage fee falls short of it */
+    if (feeOfPct >= mf) return { gross: viaPct, fee: feeOfPct, minApplied: false };
+    return { gross: need + mf, fee: mf, minApplied: mf > 0 };
+  };
+
+  let gross, fee, minApplied, balanceNeeded;
+
+  if (mode === "all"){
+    if (basis === "gross"){
+      const B = Math.round(need / (1 - f));
+      ({ gross, fee, minApplied } = pick(B, Math.round(B * f)));
+      balanceNeeded = gross;
+    } else {
+      /* fee on profit: B - f*(B - C) = need  =>  B = (need - f*C) / (1 - f) */
+      const B = Math.round((need - f * C) / (1 - f));
+      const feeOfPct = Math.round(Math.max(0, B - C) * f);
+      if (feeOfPct >= mf){ gross = B; fee = feeOfPct; minApplied = false; }
+      else { gross = need + mf; fee = mf; minApplied = mf > 0; }
+      balanceNeeded = gross;
+    }
+    /* Closing the account cannot take out less than it already holds. */
+    if (gross < C){
+      gross = C;
+      fee = Math.max(basis === "gross" ? Math.round(gross * f) : 0, mf);
+      minApplied = fee === mf && mf > 0;
+      balanceNeeded = gross;
+    }
+  } else {
+    /* keep the capital: you withdraw profit only, so gross == profit taken */
+    const G = Math.round(need / (1 - f));
+    ({ gross, fee, minApplied } = pick(G, Math.round(G * f)));
+    balanceNeeded = C + gross;
+  }
+
+  return { grossCents: gross, feeCents: fee, minApplied,
+           balanceNeededCents: balanceNeeded, inHandCents: gross - fee };
 }
 
 /* Trades needed to grow `fromCents` to `toCents`. */
@@ -538,7 +645,7 @@ $("#themeBtn").addEventListener("click", () =>
 /* ================================== TABS ================================ */
 function showTab(name){
   $$("nav.tabs button").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab === name)));
-  ["calc","target","table","compare","history"].forEach(t =>
+  ["calc","target","withdraw","table","compare","history"].forEach(t =>
     $("#tab-" + t).classList.toggle("hidden", t !== name));
   if (name === "history") renderHistory();
   window.scrollTo({ top:0, behavior:"instant" in window ? "instant" : "auto" });
@@ -846,9 +953,13 @@ function renderTable(){
     return;
   }
   const r = RESULT, c = r.currency;
-  $("#tableSub").textContent = fmt(r.capitalCents, c) + " · " + pct(r.profitPct) + "/trade · " +
-    r.tradesPerDay + " trades/day · " + r.days.length + " days · " +
-    (r.feePct > 0 ? pct(r.feePct, r.feePct % 1 ? 2 : 0) + " fee" : "no fee");
+  $("#tableSub").textContent = r.withdraw
+    ? fmt(r.capitalCents, c) + " → " + fmt(r.withdraw.needCents, c) + " in hand · " +
+      r.withdraw.tradesNeeded.toLocaleString("en-US") + " trades over " + r.days.length + " days · " +
+      pct(r.profitPct) + "/trade"
+    : fmt(r.capitalCents, c) + " · " + pct(r.profitPct) + "/trade · " +
+      r.tradesPerDay + " trades/day · " + r.days.length + " days · " +
+      (r.feePct > 0 ? pct(r.feePct, r.feePct % 1 ? 2 : 0) + " fee" : "no fee");
 
   const H = [];
   H.push('<div class="card">');
@@ -896,6 +1007,15 @@ function exportCSV(){
   L.push(q("Days") + "," + r.days.length);
   L.push(q("Compounding") + "," + q(r.compound ? "per trade" : "off"));
   L.push(q("Fee") + "," + q(pct(r.feePct)));
+  if (r.withdraw){
+    const w = r.withdraw;
+    L.push(q("Amount needed in hand") + "," + q(money(w.needCents)));
+    L.push(q("Fee charged on") + "," + q(w.basis === "gross" ? "withdrawal amount" : "profit only"));
+    L.push(q("Take out") + "," + q(w.mode === "all" ? "everything" : "profit only"));
+    L.push(q("Balance needed") + "," + q(money(w.balanceNeededCents)));
+    L.push(q("Trades needed") + "," + w.tradesNeeded);
+    L.push(q("Days needed") + "," + w.daysNeeded);
+  }
   L.push("");
   if (TABLE_VIEW === "daily"){
     L.push(["Day","Date","Start balance","Daily profit","End balance"].map(q).join(","));
@@ -910,9 +1030,16 @@ function exportCSV(){
   L.push("");
   L.push(q("Final balance") + "," + q(money(r.finalCents)));
   L.push(q("Total profit") + "," + q(money(r.profitCents)));
-  L.push(q("Fee") + "," + q(money(r.feeCents)));
-  L.push(q("Net profit") + "," + q(money(r.netProfitCents)));
-  L.push(q("Net final balance") + "," + q(money(r.netFinalCents)));
+  if (r.withdraw){
+    L.push(q("Gross to withdraw") + "," + q(money(r.withdraw.grossCents)));
+    L.push(q("Fee") + "," + q(money(r.withdraw.feeCents)));
+    L.push(q("In your hand") + "," + q(money(r.withdraw.inHandCents)));
+    L.push(q("Left in account") + "," + q(money(r.finalCents - r.withdraw.grossCents)));
+  } else {
+    L.push(q("Fee") + "," + q(money(r.feeCents)));
+    L.push(q("Net profit") + "," + q(money(r.netProfitCents)));
+    L.push(q("Net final balance") + "," + q(money(r.netFinalCents)));
+  }
   downloadBlob(new Blob(["﻿" + L.join("\r\n")], { type:"text/csv;charset=utf-8" }), fileBase(r) + ".csv");
   toast("CSV exported");
 }
@@ -920,6 +1047,9 @@ $("#csvBtn").addEventListener("click", exportCSV);
 $("#pdfBtn").addEventListener("click", exportPDF);
 
 function fileBase(r){
+  if (r.withdraw)
+    return "Withdraw_" + Math.round(r.withdraw.needCents / 100) + r.currency + "_" +
+           r.days.length + "Days_" + r.withdraw.tradesNeeded + "Trades";
   return "Growth_" + Math.round(r.capitalCents / 100) + r.currency + "_" +
          r.days.length + "Days_" + r.tradesPerDay + "Trades";
 }
@@ -1032,8 +1162,10 @@ function exportPDF(){
     page++;
     d.newPage();
     d.rectRGB(0, d.PH - 66, d.PW, 66, 0.404, 0.314, 0.643);   // #6750a4
-    d.text("Trading Growth Calculator", M, d.PH - 34, 17, 2, 1);
-    d.text("Compound projection — calculator only, no broker connection.", M, d.PH - 50, 8.5, 1, 0.88);
+    d.text(r.withdraw ? "Withdrawal Plan" : "Trading Growth Calculator", M, d.PH - 34, 17, 2, 1);
+    d.text(r.withdraw
+      ? "Reaching " + fmtPdf(r.withdraw.needCents, c) + " in hand - calculator only, no broker connection."
+      : "Compound projection — calculator only, no broker connection.", M, d.PH - 50, 8.5, 1, 0.88);
     d.textRight("Page " + page, RIGHT, d.PH - 34, 9, 3, 1);
     d.y = d.PH - 92;
   }
@@ -1067,7 +1199,8 @@ function exportPDF(){
   kv("Trades per day", String(r.tradesPerDay));
   kv("Number of days", String(r.days.length) + "  (" + fmtDateS(r.startDate) + " - " + fmtDateS(r.endDate) + ")");
   kv("Compounding", r.compound ? "On - per trade" : "Off - flat profit");
-  kv("Fee", r.feePct > 0 ? pct(r.feePct) + " of profit" : "None");
+  kv("Fee", r.feePct <= 0 ? "None"
+      : pct(r.feePct) + " of " + (r.withdraw && r.withdraw.basis === "gross" ? "the withdrawal" : "profit"));
   if (r.riskPct > 0) kv("Risk per trade", pct(r.riskPct) + "  (" + (r.profitPct / r.riskPct).toFixed(2) + " : 1 reward-risk)");
 
   sectionTitle("Result without fee");
@@ -1076,7 +1209,22 @@ function exportPDF(){
   kv("ROI", pct(r.roi) + "   (" + r.multiple.toFixed(2) + "x)");
   kv("Final balance", fmtPdf(r.finalCents, c), true);
 
-  if (r.feePct > 0){
+  if (r.withdraw){
+    const w = r.withdraw;
+    sectionTitle("Withdrawal plan");
+    kv("Amount needed in hand", fmtPdf(w.needCents, c), true);
+    kv("Fee charged on", (w.basis === "gross" ? "The withdrawal amount" : "Profit only") +
+       "  at " + pct(w.feePct) + (w.minFeeCents > 0 ? ", min " + fmtPdf(w.minFeeCents, c) : ""));
+    kv("Take out", w.mode === "all" ? "Everything - close the account" : "Profit only - keep capital trading");
+    kv("Balance you must reach", fmtPdf(w.balanceNeededCents, c));
+    kv("Trades needed", w.tradesNeeded.toLocaleString("en-US"));
+    kv("Days needed", w.daysNeeded.toLocaleString("en-US") + "   (" + fmtDateS(r.startDate) +
+       " - " + fmtDateS(r.endDate) + ")");
+    kv("Gross to withdraw", fmtPdf(w.grossCents, c));
+    kv("Fee" + (w.minApplied ? " (flat minimum)" : ""), "-" + fmtPdf(w.feeCents, c));
+    kv("In your hand", fmtPdf(w.inHandCents, c), true);
+    kv(w.mode === "all" ? "Left behind" : "Capital still trading", fmtPdf(r.finalCents - w.grossCents, c));
+  } else if (r.feePct > 0){
     sectionTitle("Result with " + pct(r.feePct, r.feePct % 1 ? 2 : 0) + " fee");
     kv("Fee amount", "-" + fmtPdf(r.feeCents, c));
     kv("Net profit", fmtPdf(r.netProfitCents, c));
@@ -1152,7 +1300,18 @@ function exportPDF(){
   d.text("Total profit", M, d.y - 4, 9.5, 1, 0.42);
   d.textRight(fmtPdf(r.profitCents, c), RIGHT, d.y - 4, 9.5, 3);
   d.y -= 15;
-  if (r.feePct > 0){
+  if (r.withdraw){
+    const w = r.withdraw;
+    d.text("Gross to withdraw", M, d.y - 4, 9.5, 1, 0.42);
+    d.textRight(fmtPdf(w.grossCents, c), RIGHT, d.y - 4, 9.5, 3);
+    d.y -= 15;
+    d.text("Fee" + (w.minApplied ? " (flat minimum)" : ""), M, d.y - 4, 9.5, 1, 0.42);
+    d.textRight("-" + fmtPdf(w.feeCents, c), RIGHT, d.y - 4, 9.5, 3);
+    d.y -= 15;
+    d.text("In your hand", M, d.y - 4, 10, 2);
+    d.textRight(fmtPdf(w.inHandCents, c), RIGHT, d.y - 4, 10, 4);
+    d.y -= 17;
+  } else if (r.feePct > 0){
     d.text("Fee (" + pct(r.feePct, r.feePct % 1 ? 2 : 0) + ")", M, d.y - 4, 9.5, 1, 0.42);
     d.textRight("-" + fmtPdf(r.feeCents, c), RIGHT, d.y - 4, 9.5, 3);
     d.y -= 15;
@@ -1243,6 +1402,118 @@ $("#targetBtn").addEventListener("click", () => {
   });
 });
 
+/* ============================== WITHDRAWAL ============================== */
+$("#w-start").value = toInput(todayUTC());
+
+$("#withdrawBtn").addEventListener("click", () => {
+  const C     = toCents($("#w-capital").value);
+  const need  = toCents($("#w-need").value);
+  const p     = Number($("#w-profit").value) || 0;
+  const tpd   = Math.max(1, Math.floor(Number($("#w-trades").value) || 1));
+  const feePct= Math.min(100, Math.max(0, Number($("#w-fee").value) || 0));
+  const mf    = toCents($("#w-minfee").value);
+  const basis = $("#w-basis").value;
+  const mode  = $("#w-mode").value;
+  const start = dayFromInput($("#w-start").value);
+  const cur   = $("#i-currency").value;
+  const comp  = $("#i-compound").checked;
+  const out   = $("#withdrawOut");
+  out.classList.remove("hidden");
+  const fail = m => { out.innerHTML = '<div class="card"><div class="banner err">' + esc(m) + '</div></div>'; };
+
+  if (C <= 0)   return fail("Enter a current capital above zero.");
+  if (need <= 0) return fail("Enter the amount you need to withdraw.");
+  if (feePct >= 100) return fail("A 100% fee leaves nothing in your hand, so no balance can ever reach your target.");
+
+  const w = solveWithdrawal({ capitalCents:C, needCents:need, feePct, minFeeCents:mf, basis, mode });
+
+  if (w.balanceNeededCents <= C){
+    out.innerHTML = '<div class="card"><div class="banner"><div><b>You are already there.</b> ' +
+      'You need a balance of ' + esc(fmt(w.balanceNeededCents, cur)) + ' and you have ' + esc(fmt(C, cur)) +
+      '. Withdraw ' + esc(fmt(w.grossCents, cur)) + ', pay ' + esc(fmt(w.feeCents, cur)) +
+      ' in fees, and ' + esc(fmt(w.inHandCents, cur)) + ' reaches your hand — no trading needed.</div></div></div>';
+    return;
+  }
+  if (p <= 0) return fail("Profit per trade must be greater than zero to grow toward the withdrawal.");
+
+  const n = tradesToTarget(C, w.balanceNeededCents, p, comp);
+  if (!isFinite(n)) return fail("That withdrawal is unreachable with these settings.");
+  if (n > MAX_TRADES) return fail("That needs " + n.toLocaleString("en-US") +
+    " trades, beyond what this app will chart. Raise the profit per trade or lower the amount.");
+
+  let r;
+  try {
+    r = simulate({ capitalCents:C, profitPct:p, riskPct:Number($("#i-risk").value) || 0,
+                   tradesPerDay:tpd, compound:comp, feePct:0, currency:cur,
+                   startDate:start, maxTrades:n });
+  } catch (err){ return fail(err.message); }
+
+  const daysNeeded = r.days.length;
+  const lastDay    = r.days[daysNeeded - 1];
+  const surplus    = r.finalCents - w.balanceNeededCents;
+
+  /* Attach the withdrawal so the table, PDF and CSV all describe the same run. */
+  r.withdraw = { ...w, needCents:need, feePct, minFeeCents:mf, basis, mode,
+                 tradesNeeded:n, daysNeeded, surplusCents:surplus };
+  r.feePct = feePct;
+  r.feeCents = w.feeCents;
+  r.netProfitCents = r.profitCents - w.feeCents;
+  r.netFinalCents = r.finalCents - w.feeCents;
+  r.netRoi = C ? r.netProfitCents / C * 100 : 0;
+  RESULT = r;
+  renderTable();
+
+  const feeLabel = basis === "gross" ? "of the withdrawal" : "of profit";
+  let html = '<div class="card">';
+  html += '<span class="section-tag">To put ' + esc(fmt(need, cur)) + ' in your hand</span>';
+  html += '<div class="headline">' + esc(fmt(w.balanceNeededCents, cur)) + '</div>';
+  html += '<p class="sub" style="margin-top:6px">Balance you must reach, from ' + esc(fmt(C, cur)) +
+          ' at ' + esc(pct(p)) + ' per trade, ' + tpd + ' trades per day.</p>';
+
+  html += '<div class="res-grid">' +
+    stat("Trades needed", n.toLocaleString("en-US"),
+         "", n % tpd ? "last day stops at trade " + (n % tpd) + " of " + tpd : "exactly " + daysNeeded + " full days") +
+    stat("Days needed", daysNeeded.toLocaleString("en-US")) +
+    stat("Withdrawal date", fmtDateS(lastDay.date), "", "day " + daysNeeded + ", from " + fmtDateS(start)) +
+    stat("Balance on that day", fmt(r.finalCents, cur), "pos") +
+    '</div>';
+
+  html += '<span class="section-tag">The withdrawal itself</span>';
+  html += '<div class="res-grid">' +
+    stat("Gross to withdraw", fmt(w.grossCents, cur)) +
+    stat("Fee", fmt(w.feeCents, cur), "neg",
+         w.minApplied ? "flat minimum applied" : pct(feePct, feePct % 1 ? 2 : 0) + " " + feeLabel) +
+    stat("In your hand", fmt(w.inHandCents, cur), "pos") +
+    stat(mode === "all" ? "Left behind" : "Capital still trading",
+         fmt(r.finalCents - w.grossCents, cur), "",
+         surplus > 0 ? "includes " + fmt(surplus, cur) + " overshoot" : "") +
+    '</div>';
+
+  html += '<div class="banner"><div>Trade <b>' + n.toLocaleString("en-US") + '</b> lands on <b>' +
+    esc(fmtDate(lastDay.date)) + '</b> and takes the balance to ' + esc(fmt(r.finalCents, cur)) + '. ' +
+    (surplus > 0 ? 'That is ' + esc(fmt(surplus, cur)) + ' more than you strictly need — a trade cannot be ' +
+      'split, so the run overshoots slightly.' : 'That lands exactly on the amount needed.') + '</div></div>';
+
+  if (w.minApplied){
+    html += '<div class="banner warn"><div><b>Minimum fee applied.</b> ' +
+      esc(pct(feePct, feePct % 1 ? 2 : 0)) + ' of the withdrawal came to less than the ' +
+      esc(fmt(mf, cur)) + ' minimum, so the flat minimum was charged instead.</div></div>';
+  }
+
+  html += '<hr class="hr"><div class="btn-row no-print">' +
+    '<button class="btn sm tonal" id="wTable">View growth table</button>' +
+    '<button class="btn sm ghost" id="wPdf">Export PDF</button>' +
+    '<button class="btn sm ghost" id="wCsv">Export CSV</button>' +
+    '<button class="btn sm ghost" id="wSave">Save to history</button>' +
+    '</div></div>';
+
+  out.innerHTML = html;
+  $("#wTable").addEventListener("click", () => showTab("table"));
+  $("#wPdf").addEventListener("click", exportPDF);
+  $("#wCsv").addEventListener("click", exportCSV);
+  $("#wSave").addEventListener("click", saveToHistory);
+});
+
 /* ================================ COMPARE =============================== */
 $("#compareBtn").addEventListener("click", () => {
   const base = readInputs();
@@ -1295,6 +1566,12 @@ function saveToHistory(){
       compound: r.compound, currency: r.currency, start: toInput(r.startDate),
     },
     final: r.finalCents, profit: r.profitCents, net: r.netFinalCents, roi: r.roi,
+    /* a withdrawal run stops on an exact trade, so replaying it needs its own inputs */
+    w: r.withdraw ? {
+      need: r.withdraw.needCents / 100, minFee: r.withdraw.minFeeCents / 100,
+      basis: r.withdraw.basis, mode: r.withdraw.mode,
+      trades: r.withdraw.tradesNeeded, hand: r.withdraw.inHandCents,
+    } : null,
   });
   writeHistory(list);
   toast("Saved to history");
@@ -1306,12 +1583,19 @@ function renderHistory(){
   list.forEach(h => {
     const i = h.inputs, c = i.currency;
     H.push('<div class="item" data-id="' + esc(h.id) + '">');
-    H.push('<div class="top"><span class="ttl">' + esc(fmt(h.final, c)) + '</span>' +
-           '<span class="when">' + esc(new Date(h.ts).toLocaleString()) + '</span></div>');
-    H.push('<div class="meta">' + esc(fmt(Math.round(i.capital * 100), c)) + ' → ' +
-      esc(fmt(h.final, c)) + ' · ' + esc(pct(i.profit)) + '/trade · ' + i.trades + '/day · ' +
-      i.days + ' days' + (i.fee > 0 ? ' · ' + esc(pct(i.fee, i.fee % 1 ? 2 : 0)) + ' fee → net ' +
-      esc(fmt(h.net, c)) : '') + (i.compound ? '' : ' · no compounding') + '</div>');
+    H.push('<div class="top"><span class="ttl">' + esc(h.w ? fmt(h.w.hand, c) + " in hand" : fmt(h.final, c)) +
+           '</span><span class="when">' + esc(new Date(h.ts).toLocaleString()) + '</span></div>');
+    if (h.w){
+      H.push('<div class="meta">Withdrawal · ' + esc(fmt(Math.round(i.capital * 100), c)) + ' → ' +
+        esc(fmt(h.final, c)) + ' · ' + h.w.trades.toLocaleString("en-US") + ' trades over ' + i.days +
+        ' days · ' + esc(pct(i.profit)) + '/trade · ' + esc(pct(i.fee, i.fee % 1 ? 2 : 0)) + ' fee on ' +
+        (h.w.basis === "gross" ? "withdrawal" : "profit") + '</div>');
+    } else {
+      H.push('<div class="meta">' + esc(fmt(Math.round(i.capital * 100), c)) + ' → ' +
+        esc(fmt(h.final, c)) + ' · ' + esc(pct(i.profit)) + '/trade · ' + i.trades + '/day · ' +
+        i.days + ' days' + (i.fee > 0 ? ' · ' + esc(pct(i.fee, i.fee % 1 ? 2 : 0)) + ' fee → net ' +
+        esc(fmt(h.net, c)) : '') + (i.compound ? '' : ' · no compounding') + '</div>');
+    }
     H.push('<div class="btn-row"><button class="btn sm tonal" data-act="load">Load</button>' +
            '<button class="btn sm ghost" data-act="del">Delete</button></div>');
     H.push('</div>');
@@ -1333,6 +1617,19 @@ function onHistoryClick(e){
   if (btn.dataset.act === "del"){
     writeHistory(list.filter(x => x.id !== id));
     renderHistory(); toast("Deleted"); return;
+  }
+  if (h && h.w){
+    const i = h.inputs;
+    $("#w-capital").value = i.capital; $("#w-need").value  = h.w.need;
+    $("#w-profit").value  = i.profit;  $("#w-trades").value = i.trades;
+    $("#w-fee").value     = i.fee;     $("#w-minfee").value = h.w.minFee;
+    $("#w-basis").value   = h.w.basis; $("#w-mode").value   = h.w.mode;
+    if (i.start) $("#w-start").value = i.start;
+    if (i.currency && CUR[i.currency]) $("#i-currency").value = i.currency;
+    $("#i-compound").checked = !!i.compound;
+    showTab("withdraw");
+    $("#withdrawBtn").click();
+    return;
   }
   if (h){
     const i = h.inputs;
