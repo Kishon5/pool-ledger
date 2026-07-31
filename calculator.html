@@ -323,8 +323,19 @@ footer.foot{color:var(--muted);font-size:12px;text-align:center;padding:22px 14p
         <input id="t-trades" type="number" inputmode="numeric" min="1" step="1" value="4">
       </div>
       <div class="field">
-        <label for="t-fee">Fee % <span class="hint">(on profit)</span></label>
+        <label for="t-fee">Fee % <span class="hint">(on what you withdraw)</span></label>
         <input id="t-fee" type="number" inputmode="decimal" min="0" max="100" step="any" value="25">
+      </div>
+      <div class="field">
+        <label for="t-minfee">Minimum fee <span class="hint">(flat, optional)</span></label>
+        <input id="t-minfee" type="number" inputmode="decimal" min="0" step="any" value="0">
+      </div>
+      <div class="field">
+        <label for="t-mode">Take out</label>
+        <select id="t-mode">
+          <option value="profit">Profit only — keep my capital</option>
+          <option value="all">Everything — close the account</option>
+        </select>
       </div>
       <div class="field">
         <label for="t-start">Start date</label>
@@ -1384,11 +1395,15 @@ $("#targetBtn").addEventListener("click", () => {
   const days = Math.ceil(n / tpd);
   const doneDate = addDays(start, days - 1);
 
-  /* Reaching the target *after* the fee is taken needs a bigger gross balance. */
-  const grossNeeded = feePct > 0 && feePct < 100
-    ? from + Math.round((to - from) / (1 - feePct / 100)) : to;
-  const nNet    = feePct > 0 ? tradesToTarget(from, grossNeeded, p, comp) : n;
-  const daysNet = Math.ceil(nNet / tpd);
+  /* Reaching the target *after* the fee needs a bigger balance. Solved by the
+     same routine the Withdraw tab uses, so the two tabs cannot disagree. */
+  const mfT   = toCents($("#t-minfee").value);
+  const modeT = $("#t-mode").value;
+  const feeOk = feePct > 0 && feePct < 100;
+  const w = feeOk ? solveWithdrawal({ capitalCents:from, needCents:to,
+                                      feePct, minFeeCents:mfT, mode:modeT }) : null;
+  const nNet    = w ? tradesToTarget(from, w.balanceNeededCents, p, comp) : n;
+  const daysNet = w ? Math.ceil(nNet / tpd) : days;
 
   let html = '<div class="card">';
   html += '<span class="section-tag">Target</span>';
@@ -1402,11 +1417,19 @@ $("#targetBtn").addEventListener("click", () => {
     stat("Growth needed", (to / from).toFixed(2) + "×", "", "+" + pct((to / from - 1) * 100)) +
     '</div>';
 
-  if (feePct > 0){
-    html += '<span class="section-tag">To keep ' + esc(fmt(to, cur)) + ' after a ' +
+  if (feePct >= 100){
+    html += '<div class="banner warn"><div><b>A 100% fee leaves nothing in your hand,</b> ' +
+            'so the after-fee figures below cannot be worked out.</div></div>';
+  } else if (w && isFinite(nNet)){
+    html += '<span class="section-tag">To put ' + esc(fmt(to, cur)) + ' in your hand after the ' +
             esc(pct(feePct, feePct % 1 ? 2 : 0)) + ' fee</span>';
     html += '<div class="res-grid">' +
-      stat("Gross balance needed", fmt(grossNeeded, cur)) +
+      stat("Balance needed", fmt(w.balanceNeededCents, cur), "",
+           modeT === "all" ? "then close the account" : "capital stays in") +
+      stat("Gross to withdraw", fmt(w.grossCents, cur)) +
+      stat("Fee", fmt(w.feeCents, cur), "neg",
+           w.minApplied ? "flat minimum applied" : pct(feePct, feePct % 1 ? 2 : 0) + " of the withdrawal") +
+      stat("In your hand", fmt(w.inHandCents, cur), "pos") +
       stat("Trades needed", nNet.toLocaleString("en-US"), "", "+" + (nNet - n).toLocaleString("en-US") + " more") +
       stat("Days needed", daysNet.toLocaleString("en-US"), "", "+" + (daysNet - days) + " more") +
       stat("Target date", fmtDateS(addDays(start, daysNet - 1))) +
@@ -1602,6 +1625,7 @@ function saveToHistory(){
     inputs: {
       capital: r.capitalCents / 100, profit: r.profitPct, risk: r.riskPct,
       trades: r.tradesPerDay, days: r.days.length, fee: r.feePct,
+      minFee: (r.minFeeCents || 0) / 100, withdrawMode: r.withdrawMode || "profit",
       compound: r.compound, currency: r.currency, start: toInput(r.startDate),
     },
     final: r.finalCents, profit: r.profitCents, net: r.netFinalCents, roi: r.roi,
@@ -1672,6 +1696,8 @@ function onHistoryClick(e){
   }
   if (h){
     const i = h.inputs;
+    $("#i-minfee").value = i.minFee || 0;
+    if (i.withdrawMode) $("#i-withdraw").value = i.withdrawMode;
     $("#i-capital").value = i.capital; $("#i-profit").value = i.profit;
     $("#i-risk").value = i.risk || 0;  $("#i-trades").value = i.trades;
     $("#i-days").value = i.days;       $("#i-fee").value = i.fee;
