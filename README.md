@@ -19,6 +19,8 @@ A separate, standalone tool in this repo — a compound-growth calculator for tr
 
 Open `calculator.html` in any browser, or "Add to Home Screen" on Android/iPhone to run it as an offline app. It shares nothing with the pool ledger — no Supabase, no accounts, no setup.
 
+`calculator.html` is self-contained and runs on its own from anywhere, including a `file://` path. Two extra files exist only so the installed app gets its own identity and icon: `calculator.webmanifest` and `calculator-assets/`. Keep the three together when hosting; without them the page still works, it just installs as a generic bookmark. `start_url` in the manifest is `calculator.html` — a relative `"."` there resolves to the directory, which on a site whose root is `index.html` launches the pool ledger instead.
+
 - **Per-trade compounding** — the balance grows by the profit % after *every* trade and is rounded to cents each time, so the next trade compounds the rounded balance and every displayed row adds up exactly. Compounding can be switched off for flat profit per trade.
 - **Results** — final balance, total profit, ROI, total trades; then, if a fee % is set, what you withdraw, the fee, what reaches your hand, what stays in the account, and net worth after the fee
 - **Fees are charged on whatever you withdraw**, not on profit as a category, with an optional flat minimum that applies when the percentage falls short of it. Choose whether you take out the profit and leave your capital trading, take out everything, or take out nothing — the fee follows.
@@ -67,5 +69,6 @@ its `HARDENING` block and re-applies cleanly.
 - **`index.html`** — the whole app: vanilla JS + CSS, no build step
 - **`schema.sql`** — complete idempotent database schema: tables, replay engine (`recompute_pool`), validation triggers, RLS policies, realtime publication
 - **`calculator.html`** — the standalone growth calculator; independent of everything above, offline, zero dependencies
+- **`calculator.webmanifest`** + **`calculator-assets/`** — install metadata and PNG icons for the calculator's home-screen app
 
 All money is integer cents (`bigint`). All timestamps are UTC (`timestamptz`), displayed in the viewer's local time. Same-timestamp ordering rule: join/deposit/bonus **before** trade, withdrawal/exit **after** trade.

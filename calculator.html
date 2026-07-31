@@ -12,8 +12,12 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Growth">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%236750a4'/%3E%3Cpath d='M14 44 L26 32 L34 40 L50 20' stroke='white' stroke-width='6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
-<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%236750a4'/%3E%3Cpath d='M14 44 L26 32 L34 40 L50 20' stroke='white' stroke-width='6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
-<link rel="manifest" href='data:application/manifest+json,{"name":"Trading Growth Calculator","short_name":"Growth","display":"standalone","start_url":".","background_color":"%23131218","theme_color":"%236750a4","icons":[{"src":"data:image/svg%2Bxml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 64 64%27%3E%3Crect width=%2764%27 height=%2764%27 rx=%2714%27 fill=%27%236750a4%27/%3E%3Cpath d=%27M14 44 L26 32 L34 40 L50 20%27 stroke=%27white%27 stroke-width=%276%27 fill=%27none%27 stroke-linecap=%27round%27 stroke-linejoin=%27round%27/%3E%3C/svg%3E","sizes":"any","type":"image/svg+xml"}]}'>
+<!-- iOS ignores the manifest for home-screen icons and needs a real PNG here. -->
+<link rel="apple-touch-icon" href="calculator-assets/apple-touch-icon.png">
+<!-- A real manifest file, not a data: URI — relative URLs inside a data: manifest
+     have no directory to resolve against, which is how start_url once ended up
+     pointing at the site root (and therefore at index.html). -->
+<link rel="manifest" href="calculator.webmanifest">
 <style>
 :root{
   --bg:#fbf8ff; --surface:#ffffff; --surface2:#f2edf7; --surface3:#e9e2f0;
