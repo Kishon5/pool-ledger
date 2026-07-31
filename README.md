@@ -13,6 +13,21 @@ A single-file web app for tracking a shared trading pool — members, deposits, 
 - **Monthly statements** (printable), CSV export, JSON backup/restore
 - **Realtime sync** across open devices, dark/light themes, 4 color palettes
 
+## Trading Growth Calculator (`calculator.html`)
+
+A separate, standalone tool in this repo — a compound-growth calculator for trading. It is **only arithmetic**: no exchange, broker, wallet or trading-platform connection, no network requests of any kind.
+
+Open `calculator.html` in any browser, or "Add to Home Screen" on Android/iPhone to run it as an offline app. It shares nothing with the pool ledger — no Supabase, no accounts, no setup.
+
+- **Per-trade compounding** — the balance grows by the profit % after *every* trade and is rounded to cents each time, so the next trade compounds the rounded balance and every displayed row adds up exactly. Compounding can be switched off for flat profit per trade.
+- **Results** — final balance, total profit, ROI, total trades; plus fee amount, net profit and net final balance when a fee % is set (the fee is charged on profit only)
+- **Target calculator** — trades needed, days needed and the calendar date you hit a goal, with a second set of figures for keeping the target *after* the fee
+- **Growth table** — daily view, or trade-by-trade with each day separated by a banded header showing the weekday and date, plus a per-day total row
+- **PDF export** — settings, results and the full table, written by a built-in PDF generator (no library, so it works offline); filenames like `Growth_1000USD_60Days_4Trades.pdf`
+- **Also** — CSV export, compare several starting capitals side by side, copy result as text, share as an image, save calculations to device history, 23 currencies, presets, dark mode
+
+Days are calendar days including weekends, and Day 1 is the start date you choose. Risk per trade % is informational — it shows risk amount, reward:risk, break-even win rate and losses-to-halve-capital, and does not affect the projection.
+
 ## Setup
 
 1. Create a free [Supabase](https://supabase.com) project
@@ -49,5 +64,6 @@ its `HARDENING` block and re-applies cleanly.
 
 - **`index.html`** — the whole app: vanilla JS + CSS, no build step
 - **`schema.sql`** — complete idempotent database schema: tables, replay engine (`recompute_pool`), validation triggers, RLS policies, realtime publication
+- **`calculator.html`** — the standalone growth calculator; independent of everything above, offline, zero dependencies
 
 All money is integer cents (`bigint`). All timestamps are UTC (`timestamptz`), displayed in the viewer's local time. Same-timestamp ordering rule: join/deposit/bonus **before** trade, withdrawal/exit **after** trade.

@@ -1,0 +1,1356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Growth Calculator</title>
+<meta name="description" content="Offline compound-growth calculator for trading — per-trade compounding, fees, target dates, day-by-day tables and PDF export.">
+<meta name="theme-color" content="#6750a4" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#131218" media="(prefers-color-scheme: dark)">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Growth">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%236750a4'/%3E%3Cpath d='M14 44 L26 32 L34 40 L50 20' stroke='white' stroke-width='6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%236750a4'/%3E%3Cpath d='M14 44 L26 32 L34 40 L50 20' stroke='white' stroke-width='6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="manifest" href='data:application/manifest+json,{"name":"Trading Growth Calculator","short_name":"Growth","display":"standalone","start_url":".","background_color":"%23131218","theme_color":"%236750a4","icons":[{"src":"data:image/svg%2Bxml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 64 64%27%3E%3Crect width=%2764%27 height=%2764%27 rx=%2714%27 fill=%27%236750a4%27/%3E%3Cpath d=%27M14 44 L26 32 L34 40 L50 20%27 stroke=%27white%27 stroke-width=%276%27 fill=%27none%27 stroke-linecap=%27round%27 stroke-linejoin=%27round%27/%3E%3C/svg%3E","sizes":"any","type":"image/svg+xml"}]}'>
+<style>
+:root{
+  --bg:#fbf8ff; --surface:#ffffff; --surface2:#f2edf7; --surface3:#e9e2f0;
+  --outline:#cac4d0; --outline-v:#e2dce8;
+  --text:#1c1b1f; --muted:#5d5866;
+  --primary:#6750a4; --on-primary:#ffffff; --primary-c:#e9ddff; --on-primary-c:#22005d;
+  --ok:#106b34; --ok-c:#c5f0d3; --warn:#8c4a00; --warn-c:#ffddb8; --err:#ba1a1a; --err-c:#ffdad6;
+  --shadow:0 1px 2px rgba(0,0,0,.10),0 2px 8px rgba(0,0,0,.06);
+  --r:16px;
+}
+html[data-theme="dark"]{
+  --bg:#131218; --surface:#1d1b21; --surface2:#26232c; --surface3:#302d38;
+  --outline:#4a4551; --outline-v:#33303a;
+  --text:#e7e1e9; --muted:#c9c2d0;
+  --primary:#d0bcff; --on-primary:#381e72; --primary-c:#4f378a; --on-primary-c:#e9ddff;
+  --ok:#7ddc9d; --ok-c:#0c4d25; --warn:#ffb95c; --warn-c:#5f3600; --err:#ffb4ab; --err-c:#93000a;
+  --shadow:0 1px 2px rgba(0,0,0,.35),0 2px 10px rgba(0,0,0,.28);
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:var(--bg); color:var(--text);
+  font:400 15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  -webkit-text-size-adjust:100%; padding-bottom:env(safe-area-inset-bottom);
+}
+.wrap{max-width:940px;margin:0 auto;padding:0 14px 96px}
+
+/* ---- app bar ---- */
+header.bar{
+  position:sticky;top:0;z-index:40;background:var(--bg);
+  padding:calc(env(safe-area-inset-top) + 10px) 14px 0;
+  border-bottom:1px solid var(--outline-v);
+}
+.bar-in{max-width:940px;margin:0 auto;display:flex;align-items:center;gap:10px}
+.logo{width:32px;height:32px;border-radius:9px;background:var(--primary);display:grid;place-items:center;flex:none}
+.logo svg{width:20px;height:20px}
+h1{font-size:17px;font-weight:600;margin:0;letter-spacing:-.01em;flex:1;min-width:0;
+   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.icon-btn{
+  width:40px;height:40px;flex:none;border-radius:50%;border:0;background:transparent;color:var(--text);
+  display:grid;place-items:center;cursor:pointer;font-size:18px;
+}
+.icon-btn:hover{background:var(--surface2)}
+nav.tabs{max-width:940px;margin:0 auto;display:flex;gap:2px;overflow-x:auto;scrollbar-width:none}
+nav.tabs::-webkit-scrollbar{display:none}
+nav.tabs button{
+  flex:1 0 auto;min-width:84px;padding:12px 12px 10px;border:0;background:transparent;color:var(--muted);
+  font:500 13px/1 inherit;cursor:pointer;border-bottom:3px solid transparent;white-space:nowrap;
+}
+nav.tabs button[aria-selected="true"]{color:var(--primary);border-bottom-color:var(--primary);font-weight:600}
+
+/* ---- cards ---- */
+.card{background:var(--surface);border:1px solid var(--outline-v);border-radius:var(--r);
+      padding:16px;margin:14px 0;box-shadow:var(--shadow)}
+.card h2{font-size:15px;font-weight:600;margin:0 0 4px;letter-spacing:-.01em}
+.card h2 + .sub{margin:0 0 14px}
+.sub{color:var(--muted);font-size:13px;margin:0 0 10px}
+.hr{height:1px;background:var(--outline-v);border:0;margin:16px -16px}
+
+/* ---- form ---- */
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+.field{display:flex;flex-direction:column;gap:5px;min-width:0}
+.field label{font-size:12px;font-weight:600;color:var(--muted);letter-spacing:.01em}
+.field .hint{font-size:11px;color:var(--muted);font-weight:400}
+input,select{
+  width:100%;padding:11px 12px;border:1px solid var(--outline);border-radius:11px;
+  background:var(--surface);color:var(--text);font:inherit;font-size:15px;
+}
+input:focus,select:focus{outline:2px solid var(--primary);outline-offset:-2px;border-color:transparent}
+input[type=date]{min-height:43px}
+select{appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),linear-gradient(135deg,var(--muted) 50%,transparent 50%);
+  background-position:calc(100% - 17px) 19px,calc(100% - 12px) 19px;background-size:5px 5px,5px 5px;background-repeat:no-repeat;padding-right:34px}
+.inline{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.switch{display:inline-flex;align-items:center;gap:9px;cursor:pointer;user-select:none;font-size:14px}
+.switch input{position:absolute;opacity:0;width:0;height:0}
+.track{width:46px;height:26px;border-radius:13px;background:var(--surface3);border:2px solid var(--outline);
+       position:relative;transition:.16s;flex:none}
+.track::after{content:"";position:absolute;left:3px;top:3px;width:16px;height:16px;border-radius:50%;
+       background:var(--outline);transition:.16s}
+.switch input:checked + .track{background:var(--primary);border-color:var(--primary)}
+.switch input:checked + .track::after{transform:translateX(20px);background:var(--on-primary);width:20px;height:20px;top:1px}
+.switch input:focus-visible + .track{outline:2px solid var(--primary);outline-offset:2px}
+
+/* ---- chips ---- */
+.chips{display:flex;flex-wrap:wrap;gap:7px;margin-top:7px}
+.chip{
+  padding:7px 13px;border-radius:9px;border:1px solid var(--outline);background:transparent;
+  color:var(--text);font:500 13px/1 inherit;cursor:pointer;white-space:nowrap;
+}
+.chip:hover{background:var(--surface2)}
+.chip[aria-pressed="true"]{background:var(--primary-c);border-color:transparent;color:var(--on-primary-c);font-weight:600}
+.chip-label{font-size:12px;font-weight:600;color:var(--muted);margin-top:14px}
+
+/* ---- buttons ---- */
+.btn{
+  padding:12px 20px;border-radius:11px;border:0;background:var(--primary);color:var(--on-primary);
+  font:600 15px/1 inherit;cursor:pointer;display:inline-flex;align-items:center;gap:8px;justify-content:center;
+}
+.btn:hover{filter:brightness(1.07)}
+.btn:active{transform:translateY(1px)}
+.btn.tonal{background:var(--primary-c);color:var(--on-primary-c)}
+.btn.ghost{background:transparent;color:var(--primary);border:1px solid var(--outline)}
+.btn.wide{width:100%}
+.btn.sm{padding:9px 14px;font-size:13px;border-radius:10px}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn-row{display:flex;gap:8px;flex-wrap:wrap}
+
+/* ---- results ---- */
+.res-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:1px;
+          background:var(--outline-v);border:1px solid var(--outline-v);border-radius:12px;overflow:hidden}
+.stat{background:var(--surface);padding:13px 14px;min-width:0}
+.stat .k{font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;
+         display:block;margin-bottom:4px}
+.stat .v{font-size:19px;font-weight:600;letter-spacing:-.02em;font-variant-numeric:tabular-nums;
+         overflow-wrap:anywhere;line-height:1.25}
+.stat .v.pos{color:var(--ok)} .stat .v.neg{color:var(--err)}
+.stat .n{font-size:11px;color:var(--muted);margin-top:3px}
+.banner{
+  border-radius:12px;padding:13px 15px;margin:14px 0 0;font-size:14px;display:flex;gap:10px;align-items:flex-start;
+  background:var(--primary-c);color:var(--on-primary-c);
+}
+.banner.warn{background:var(--warn-c);color:var(--warn)}
+.banner.err{background:var(--err-c);color:var(--err)}
+.banner b{font-weight:600}
+.section-tag{
+  display:inline-block;font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;
+  color:var(--muted);margin:18px 0 8px;
+}
+.headline{font-size:30px;font-weight:700;letter-spacing:-.03em;font-variant-numeric:tabular-nums;
+          margin:2px 0 0;overflow-wrap:anywhere;line-height:1.15}
+.headline.pos{color:var(--ok)}
+
+/* ---- table ---- */
+.tablebox{overflow-x:auto;border:1px solid var(--outline-v);border-radius:12px;-webkit-overflow-scrolling:touch}
+table{border-collapse:collapse;width:100%;font-size:13.5px;font-variant-numeric:tabular-nums}
+th,td{padding:8px 11px;text-align:right;white-space:nowrap;border-bottom:1px solid var(--outline-v)}
+th{background:var(--surface2);font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;
+   letter-spacing:.05em;position:sticky;top:0;z-index:1}
+th:first-child,td:first-child{text-align:left}
+tbody tr:last-child td{border-bottom:0}
+tr.daybreak td{
+  background:var(--primary-c);color:var(--on-primary-c);font-weight:700;text-align:left;
+  font-size:12.5px;letter-spacing:.01em;
+}
+tr.daytotal td{background:var(--surface2);font-weight:600;font-size:12.5px}
+tr.daytotal td:first-child{color:var(--muted);font-weight:600}
+td.pos{color:var(--ok)}
+.scroll-note{font-size:11.5px;color:var(--muted);margin:8px 2px 0}
+
+/* ---- history / compare ---- */
+.list{display:flex;flex-direction:column;gap:10px}
+.item{border:1px solid var(--outline-v);border-radius:12px;padding:12px 14px;background:var(--surface2)}
+.item .top{display:flex;justify-content:space-between;gap:10px;align-items:baseline;flex-wrap:wrap}
+.item .ttl{font-weight:600;font-size:15px;font-variant-numeric:tabular-nums}
+.item .when{font-size:11.5px;color:var(--muted)}
+.item .meta{font-size:12.5px;color:var(--muted);margin:5px 0 9px}
+.empty{text-align:center;color:var(--muted);font-size:14px;padding:26px 10px}
+
+.toast{
+  position:fixed;left:50%;transform:translateX(-50%);bottom:calc(22px + env(safe-area-inset-bottom));
+  background:var(--text);color:var(--bg);padding:12px 18px;border-radius:10px;font-size:14px;font-weight:500;
+  z-index:99;box-shadow:0 4px 18px rgba(0,0,0,.3);max-width:90vw;text-align:center;
+  opacity:0;pointer-events:none;transition:opacity .18s,transform .18s;
+}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(-4px)}
+.hidden{display:none !important}
+footer.foot{color:var(--muted);font-size:12px;text-align:center;padding:22px 14px 8px;line-height:1.6}
+@media print{header.bar,nav.tabs,.btn-row,.no-print{display:none !important}}
+@media (max-width:420px){ .headline{font-size:25px} .stat .v{font-size:17px} }
+</style>
+</head>
+<body>
+
+<header class="bar">
+  <div class="bar-in">
+    <div class="logo"><svg viewBox="0 0 64 64" aria-hidden="true"><path d="M12 46 L26 32 L34 40 L52 18" stroke="#fff" stroke-width="7" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+    <h1>Trading Growth Calculator</h1>
+    <button class="icon-btn" id="themeBtn" title="Toggle dark mode" aria-label="Toggle dark mode">◐</button>
+  </div>
+  <nav class="tabs" role="tablist">
+    <button role="tab" data-tab="calc"    aria-selected="true">Calculator</button>
+    <button role="tab" data-tab="target"  aria-selected="false">Target</button>
+    <button role="tab" data-tab="table"   aria-selected="false">Table</button>
+    <button role="tab" data-tab="compare" aria-selected="false">Compare</button>
+    <button role="tab" data-tab="history" aria-selected="false">History</button>
+  </nav>
+</header>
+
+<div class="wrap">
+
+<!-- ============================ CALCULATOR ============================ -->
+<section id="tab-calc">
+  <div class="card">
+    <h2>Inputs</h2>
+    <p class="sub">Profit compounds after <b>every trade</b>. Balances round to 2 decimals at each trade, so every row adds up exactly.</p>
+    <div class="grid">
+      <div class="field">
+        <label for="i-capital">Initial capital</label>
+        <input id="i-capital" type="number" inputmode="decimal" min="0" step="any" value="1000">
+      </div>
+      <div class="field">
+        <label for="i-profit">Profit per trade %</label>
+        <input id="i-profit" type="number" inputmode="decimal" step="any" value="0.85">
+      </div>
+      <div class="field">
+        <label for="i-trades">Trades per day</label>
+        <input id="i-trades" type="number" inputmode="numeric" min="1" step="1" value="4">
+      </div>
+      <div class="field">
+        <label for="i-days">Number of days</label>
+        <input id="i-days" type="number" inputmode="numeric" min="1" step="1" value="60">
+      </div>
+      <div class="field">
+        <label for="i-fee">Fee % <span class="hint">(on profit, optional)</span></label>
+        <input id="i-fee" type="number" inputmode="decimal" min="0" max="100" step="any" value="25">
+      </div>
+      <div class="field">
+        <label for="i-risk">Risk per trade % <span class="hint">(optional)</span></label>
+        <input id="i-risk" type="number" inputmode="decimal" min="0" step="any" value="1">
+      </div>
+      <div class="field">
+        <label for="i-start">Start date <span class="hint">(= Day 1)</span></label>
+        <input id="i-start" type="date">
+      </div>
+      <div class="field">
+        <label for="i-currency">Currency</label>
+        <select id="i-currency"></select>
+      </div>
+    </div>
+
+    <div class="inline" style="margin-top:14px">
+      <label class="switch"><input type="checkbox" id="i-compound" checked><span class="track"></span><span>Compound</span></label>
+      <span class="sub" style="margin:0">Off = fixed profit per trade, calculated on the starting capital.</span>
+    </div>
+
+    <div class="chip-label">Trades / day</div>
+    <div class="chips" data-preset="trades">
+      <button class="chip" data-v="2">2</button><button class="chip" data-v="3">3</button>
+      <button class="chip" data-v="4">4</button><button class="chip" data-v="6">6</button>
+      <button class="chip" data-v="8">8</button><button class="chip" data-v="10">10</button>
+    </div>
+    <div class="chip-label">Profit per trade</div>
+    <div class="chips" data-preset="profit">
+      <button class="chip" data-v="0.25">0.25%</button><button class="chip" data-v="0.5">0.5%</button>
+      <button class="chip" data-v="0.85">0.85%</button><button class="chip" data-v="1">1%</button>
+      <button class="chip" data-v="1.5">1.5%</button><button class="chip" data-v="2">2%</button>
+    </div>
+    <div class="chip-label">Days</div>
+    <div class="chips" data-preset="days">
+      <button class="chip" data-v="7">7</button><button class="chip" data-v="15">15</button>
+      <button class="chip" data-v="30">30</button><button class="chip" data-v="60">60</button>
+      <button class="chip" data-v="90">90</button><button class="chip" data-v="180">180</button>
+      <button class="chip" data-v="365">365</button>
+    </div>
+    <div class="chip-label">Fee</div>
+    <div class="chips" data-preset="fee">
+      <button class="chip" data-v="0">No fee</button><button class="chip" data-v="10">10%</button>
+      <button class="chip" data-v="20">20%</button><button class="chip" data-v="25">25%</button>
+      <button class="chip" data-v="30">30%</button><button class="chip" data-v="50">50%</button>
+    </div>
+
+    <hr class="hr">
+    <button class="btn wide" id="calcBtn">Calculate</button>
+  </div>
+
+  <div id="calcOut" class="hidden"></div>
+</section>
+
+<!-- ============================== TARGET ============================== -->
+<section id="tab-target" class="hidden">
+  <div class="card">
+    <h2>Target calculator</h2>
+    <p class="sub">How many trades, how many days, and what date you reach your goal.</p>
+    <div class="grid">
+      <div class="field">
+        <label for="t-capital">Current capital</label>
+        <input id="t-capital" type="number" inputmode="decimal" min="0" step="any" value="1000">
+      </div>
+      <div class="field">
+        <label for="t-target">Target amount</label>
+        <input id="t-target" type="number" inputmode="decimal" min="0" step="any" value="10000">
+      </div>
+      <div class="field">
+        <label for="t-profit">Profit per trade %</label>
+        <input id="t-profit" type="number" inputmode="decimal" step="any" value="0.85">
+      </div>
+      <div class="field">
+        <label for="t-trades">Trades per day</label>
+        <input id="t-trades" type="number" inputmode="numeric" min="1" step="1" value="4">
+      </div>
+      <div class="field">
+        <label for="t-fee">Fee % <span class="hint">(on profit)</span></label>
+        <input id="t-fee" type="number" inputmode="decimal" min="0" max="100" step="any" value="25">
+      </div>
+      <div class="field">
+        <label for="t-start">Start date</label>
+        <input id="t-start" type="date">
+      </div>
+    </div>
+    <hr class="hr">
+    <button class="btn wide" id="targetBtn">Calculate target</button>
+  </div>
+  <div id="targetOut" class="hidden"></div>
+</section>
+
+<!-- =============================== TABLE ============================== -->
+<section id="tab-table" class="hidden">
+  <div class="card">
+    <h2>Growth table</h2>
+    <p class="sub" id="tableSub">Run a calculation first.</p>
+    <div class="chips" data-preset="view">
+      <button class="chip" data-v="daily" aria-pressed="true">Daily view</button>
+      <button class="chip" data-v="trade">Trade view</button>
+    </div>
+    <div class="btn-row no-print" style="margin-top:14px">
+      <button class="btn sm tonal" id="pdfBtn">Export PDF</button>
+      <button class="btn sm ghost" id="csvBtn">Export CSV</button>
+    </div>
+  </div>
+  <div id="tableOut"></div>
+</section>
+
+<!-- ============================== COMPARE ============================= -->
+<section id="tab-compare" class="hidden">
+  <div class="card">
+    <h2>Compare capitals</h2>
+    <p class="sub">Same settings, different starting amounts — side by side.</p>
+    <div class="field">
+      <label for="c-list">Capitals <span class="hint">(comma separated)</span></label>
+      <input id="c-list" type="text" inputmode="decimal" value="500, 1000, 5334, 10000">
+    </div>
+    <p class="sub" style="margin-top:10px" id="c-note"></p>
+    <hr class="hr">
+    <button class="btn wide" id="compareBtn">Compare</button>
+  </div>
+  <div id="compareOut"></div>
+</section>
+
+<!-- ============================== HISTORY ============================= -->
+<section id="tab-history" class="hidden">
+  <div class="card">
+    <h2>Saved calculations</h2>
+    <p class="sub">Stored on this device only. Nothing is uploaded anywhere.</p>
+    <div id="historyOut"></div>
+  </div>
+</section>
+
+<footer class="foot">
+  Mathematical calculator only — no exchange, broker, wallet or trading-platform connection.<br>
+  Results are projections from fixed inputs, not a prediction of real trading outcomes.
+</footer>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+"use strict";
+/* =====================================================================
+   Trading Growth Calculator — single file, fully offline.
+   No network requests, no external assets, no build step.
+   Money is handled as integer cents everywhere; the balance is rounded
+   to cents after every trade and the next trade compounds the rounded
+   value, so displayed rows always add up exactly.
+   ===================================================================== */
+
+const $  = (s, r) => (r || document).querySelector(s);
+const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
+
+/* ------------------------------- currency ------------------------------ */
+const CURRENCIES = [
+  { code:"USD", sym:"$",   name:"US Dollar" },
+  { code:"INR", sym:"₹",   name:"Indian Rupee" },
+  { code:"EUR", sym:"€",   name:"Euro" },
+  { code:"GBP", sym:"£",   name:"British Pound" },
+  { code:"JPY", sym:"¥",   name:"Japanese Yen" },
+  { code:"AED", sym:"AED ",name:"UAE Dirham" },
+  { code:"SAR", sym:"SAR ",name:"Saudi Riyal" },
+  { code:"PKR", sym:"₨",   name:"Pakistani Rupee" },
+  { code:"BDT", sym:"৳",   name:"Bangladeshi Taka" },
+  { code:"LKR", sym:"Rs ", name:"Sri Lankan Rupee" },
+  { code:"NPR", sym:"रू ", name:"Nepalese Rupee" },
+  { code:"NGN", sym:"₦",   name:"Nigerian Naira" },
+  { code:"ZAR", sym:"R",   name:"South African Rand" },
+  { code:"BRL", sym:"R$",  name:"Brazilian Real" },
+  { code:"PHP", sym:"₱",   name:"Philippine Peso" },
+  { code:"IDR", sym:"Rp ", name:"Indonesian Rupiah" },
+  { code:"MYR", sym:"RM ", name:"Malaysian Ringgit" },
+  { code:"SGD", sym:"S$",  name:"Singapore Dollar" },
+  { code:"AUD", sym:"A$",  name:"Australian Dollar" },
+  { code:"CAD", sym:"C$",  name:"Canadian Dollar" },
+  { code:"TRY", sym:"₺",   name:"Turkish Lira" },
+  { code:"VND", sym:"₫",   name:"Vietnamese Dong" },
+  { code:"THB", sym:"฿",   name:"Thai Baht" },
+];
+const CUR = Object.fromEntries(CURRENCIES.map(c => [c.code, c]));
+/* PDF uses the built-in WinAnsi fonts, which have no ₹ ৳ ₦ ₱ ₺ ₫ ฿ glyphs. */
+const PDF_SYM = { USD:"$", EUR:"€", GBP:"£", JPY:"¥", ZAR:"R", BRL:"R$",
+                  SGD:"S$", AUD:"A$", CAD:"C$" };
+const pdfSym = code => PDF_SYM[code] || (code + " ");
+
+const money = cents => {
+  const neg = cents < 0, n = Math.abs(cents);
+  const s = (Math.floor(n / 100)).toLocaleString("en-US") + "." + String(n % 100).padStart(2, "0");
+  return (neg ? "-" : "") + s;
+};
+const fmt     = (cents, code) => (cents < 0 ? "-" : "") + (CUR[code] || CUR.USD).sym + money(Math.abs(cents));
+const fmtPdf  = (cents, code) => (cents < 0 ? "-" : "") + pdfSym(code) + money(Math.abs(cents));
+const pct     = (x, d) => (x).toFixed(d === undefined ? 2 : d) + "%";
+const toCents = v => Math.round((Number(v) || 0) * 100);
+
+/* --------------------------------- dates -------------------------------- */
+/* Anchored at UTC noon so DST shifts can never move a day boundary. */
+const dayFromInput = s => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s || ""));
+  if (!m) return todayUTC();
+  return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], 12));
+};
+function todayUTC(){ const n = new Date(); return new Date(Date.UTC(n.getFullYear(), n.getMonth(), n.getDate(), 12)); }
+const addDays  = (d, n) => new Date(d.getTime() + n * 86400000);
+const toInput  = d => d.toISOString().slice(0, 10);
+/* Fixed 3-letter names — locale "short" months vary ("Sept" vs "Sep") and the
+   PDF font has no glyphs outside WinAnsi, so dates stay predictable. */
+const MON = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const DOW = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+const fmtDateS = d => String(d.getUTCDate()).padStart(2, "0") + " " + MON[d.getUTCMonth()] + " " + d.getUTCFullYear();
+const fmtDate  = d => DOW[d.getUTCDay()] + ", " + fmtDateS(d);
+
+/* ================================ ENGINE ================================ */
+/* Per-trade compounding on integer cents.
+   compound on : end = round(start * (1 + p))            — grows each trade
+   compound off: end = start + round(capital0 * p)       — flat profit per trade  */
+const MAX_TRADES = 200000;
+
+function simulate(inp){
+  const { capitalCents, profitPct, tradesPerDay, days, compound, feePct, startDate } = inp;
+  const total = tradesPerDay * days;
+  if (total > MAX_TRADES) throw new Error("That is " + total.toLocaleString("en-US") +
+    " trades. Keep days × trades/day at or below " + MAX_TRADES.toLocaleString("en-US") + ".");
+
+  const rate = profitPct / 100;
+  const flat = compound ? 0 : Math.round(capitalCents * rate);
+  const rows = [];
+  let bal = capitalCents, n = 0;
+
+  for (let d = 1; d <= days; d++){
+    const dayStart = bal;
+    const trades = [];
+    for (let t = 1; t <= tradesPerDay; t++){
+      const s = bal;
+      const end = compound ? Math.round(s * (1 + rate)) : s + flat;
+      bal = end; n++;
+      trades.push({ n, t, startCents:s, profitCents:end - s, endCents:end });
+    }
+    rows.push({
+      day: d, date: addDays(startDate, d - 1),
+      startCents: dayStart, profitCents: bal - dayStart, endCents: bal, trades,
+    });
+  }
+
+  const profitCents = bal - capitalCents;
+  /* Past 2^53 cents (~90 trillion) doubles can no longer hold every cent. */
+  const exact = bal <= Number.MAX_SAFE_INTEGER;
+  const feeCents    = Math.round(profitCents * (feePct / 100));
+  const netProfit   = profitCents - feeCents;
+
+  return {
+    ...inp,
+    days: rows,
+    exact,
+    totalTrades: n,
+    finalCents: bal,
+    profitCents,
+    feeCents,
+    netProfitCents: netProfit,
+    netFinalCents: capitalCents + netProfit,
+    roi:    capitalCents ? profitCents / capitalCents * 100 : 0,
+    netRoi: capitalCents ? netProfit   / capitalCents * 100 : 0,
+    multiple:    capitalCents ? bal / capitalCents : 0,
+    endDate: addDays(startDate, days - 1),
+  };
+}
+
+/* Trades needed to grow `fromCents` to `toCents`. */
+function tradesToTarget(fromCents, toCents, profitPct, compound){
+  if (toCents <= fromCents) return 0;
+  if (profitPct <= 0) return Infinity;
+  if (compound){
+    const n = Math.log(toCents / fromCents) / Math.log(1 + profitPct / 100);
+    return Math.ceil(n - 1e-9);
+  }
+  const per = Math.round(fromCents * profitPct / 100);
+  if (per <= 0) return Infinity;
+  return Math.ceil((toCents - fromCents) / per - 1e-9);
+}
+
+/* ================================= STATE ================================ */
+let RESULT = null;         // last full simulation
+let TABLE_VIEW = "daily";
+const HKEY = "tgc.history.v1", TKEY = "tgc.theme.v1", IKEY = "tgc.inputs.v1";
+
+const toastEl = $("#toast");
+let toastT = 0;
+function toast(msg){
+  toastEl.textContent = msg; toastEl.classList.add("show");
+  clearTimeout(toastT); toastT = setTimeout(() => toastEl.classList.remove("show"), 2300);
+}
+
+/* ================================= THEME ================================ */
+function applyTheme(t){
+  document.documentElement.setAttribute("data-theme", t);
+  try { localStorage.setItem(TKEY, t); } catch (e) {}
+}
+(function initTheme(){
+  let t = null;
+  try { t = localStorage.getItem(TKEY); } catch (e) {}
+  if (!t) t = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  applyTheme(t);
+})();
+$("#themeBtn").addEventListener("click", () =>
+  applyTheme(document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark"));
+
+/* ================================== TABS ================================ */
+function showTab(name){
+  $$("nav.tabs button").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab === name)));
+  ["calc","target","table","compare","history"].forEach(t =>
+    $("#tab-" + t).classList.toggle("hidden", t !== name));
+  if (name === "history") renderHistory();
+  window.scrollTo({ top:0, behavior:"instant" in window ? "instant" : "auto" });
+}
+$$("nav.tabs button").forEach(b => b.addEventListener("click", () => showTab(b.dataset.tab)));
+
+/* ============================== INPUT WIRING ============================ */
+CURRENCIES.forEach(c => {
+  const o = document.createElement("option");
+  o.value = c.code; o.textContent = c.code + " — " + c.name + " (" + c.sym.trim() + ")";
+  $("#i-currency").appendChild(o);
+});
+$("#i-start").value = toInput(todayUTC());
+$("#t-start").value = toInput(todayUTC());
+
+function readInputs(){
+  return {
+    capitalCents: toCents($("#i-capital").value),
+    profitPct:    Number($("#i-profit").value) || 0,
+    riskPct:      Number($("#i-risk").value)   || 0,
+    tradesPerDay: Math.max(1, Math.floor(Number($("#i-trades").value) || 1)),
+    days:         Math.max(1, Math.floor(Number($("#i-days").value)   || 1)),
+    feePct:       Math.min(100, Math.max(0, Number($("#i-fee").value) || 0)),
+    compound:     $("#i-compound").checked,
+    currency:     $("#i-currency").value,
+    startDate:    dayFromInput($("#i-start").value),
+  };
+}
+function saveInputs(){
+  try {
+    localStorage.setItem(IKEY, JSON.stringify({
+      capital:$("#i-capital").value, profit:$("#i-profit").value, risk:$("#i-risk").value,
+      trades:$("#i-trades").value, days:$("#i-days").value, fee:$("#i-fee").value,
+      compound:$("#i-compound").checked, currency:$("#i-currency").value,
+    }));
+  } catch (e) {}
+}
+const PRESET_FIELD = { trades:"#i-trades", profit:"#i-profit", days:"#i-days", fee:"#i-fee" };
+function syncChips(){
+  Object.entries(PRESET_FIELD).forEach(([key, sel]) => {
+    const v = Number($(sel).value);
+    $$('[data-preset="' + key + '"] .chip').forEach(c =>
+      c.setAttribute("aria-pressed", String(Number(c.dataset.v) === v)));
+  });
+}
+(function restoreInputs(){
+  let s = null;
+  try { s = JSON.parse(localStorage.getItem(IKEY) || "null"); } catch (e) {}
+  if (!s) { syncChips(); return; }
+  const set = (id, v) => { if (v !== undefined && v !== null && v !== "") $(id).value = v; };
+  set("#i-capital", s.capital); set("#i-profit", s.profit); set("#i-risk", s.risk);
+  set("#i-trades", s.trades);   set("#i-days", s.days);
+  if (s.fee !== undefined && s.fee !== null) $("#i-fee").value = s.fee;
+  if (typeof s.compound === "boolean") $("#i-compound").checked = s.compound;
+  if (s.currency && CUR[s.currency]) $("#i-currency").value = s.currency;
+  syncChips();
+})();
+
+$$("[data-preset]").forEach(group => {
+  const key = group.dataset.preset;
+  group.addEventListener("click", e => {
+    const chip = e.target.closest(".chip"); if (!chip) return;
+    if (key === "view"){
+      TABLE_VIEW = chip.dataset.v;
+      $$('[data-preset="view"] .chip').forEach(c => c.setAttribute("aria-pressed", String(c === chip)));
+      renderTable();
+      return;
+    }
+    $(PRESET_FIELD[key]).value = chip.dataset.v;
+    syncChips(); saveInputs();
+  });
+});
+["#i-capital","#i-profit","#i-risk","#i-trades","#i-days","#i-fee","#i-currency","#i-compound"]
+  .forEach(sel => $(sel).addEventListener("input", () => { syncChips(); saveInputs(); }));
+
+/* ============================== CALCULATOR ============================== */
+$("#calcBtn").addEventListener("click", () => {
+  const inp = readInputs();
+  if (inp.capitalCents <= 0) { toast("Enter a starting capital above zero."); return; }
+  let r;
+  try { r = simulate(inp); }
+  catch (err) { $("#calcOut").classList.remove("hidden");
+                $("#calcOut").innerHTML = '<div class="card"><div class="banner err">' + esc(err.message) + '</div></div>';
+                return; }
+  RESULT = r;
+  renderResult(r);
+  renderTable();
+  $("#c-note").textContent = "Using " + pct(r.profitPct) + " per trade, " + r.tradesPerDay +
+    " trades/day, " + r.days.length + " days, " + pct(r.feePct, 0) + " fee.";
+});
+
+const esc = s => String(s).replace(/[&<>"']/g, c =>
+  ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+
+function stat(k, v, cls, note){
+  return '<div class="stat"><span class="k">' + esc(k) + '</span>' +
+         '<div class="v ' + (cls || "") + '">' + esc(v) + '</div>' +
+         (note ? '<div class="n">' + esc(note) + '</div>' : "") + '</div>';
+}
+
+function renderResult(r){
+  const c = r.currency, out = $("#calcOut");
+  const perDay = r.days.length ? Math.round(r.profitCents / r.days.length) : 0;
+  const dailyGrowth = r.compound ? (Math.pow(1 + r.profitPct / 100, r.tradesPerDay) - 1) * 100
+                                 : (r.days[0].profitCents / r.capitalCents) * 100;
+
+  let html = '<div class="card">';
+  html += '<span class="section-tag">Without fee</span>';
+  html += '<div class="headline pos">' + esc(fmt(r.finalCents, c)) + '</div>';
+  html += '<p class="sub" style="margin-top:6px">Final balance after ' + r.totalTrades.toLocaleString("en-US") +
+          ' trades over ' + r.days.length + ' days — ' + esc(fmtDateS(r.startDate)) + ' to ' + esc(fmtDateS(r.endDate)) + '.</p>';
+  html += '<div class="res-grid">' +
+    stat("Final capital", fmt(r.finalCents, c)) +
+    stat("Total profit", fmt(r.profitCents, c), "pos") +
+    stat("ROI", pct(r.roi), "pos", r.multiple.toFixed(2) + "× your capital") +
+    stat("Total trades", r.totalTrades.toLocaleString("en-US"), "", r.tradesPerDay + "/day × " + r.days.length + " days") +
+    '</div>';
+
+  if (r.feePct > 0){
+    html += '<span class="section-tag">With ' + esc(pct(r.feePct, r.feePct % 1 ? 2 : 0)) + ' fee</span>';
+    html += '<div class="res-grid">' +
+      stat("Fee amount", fmt(r.feeCents, c), "neg", "charged on profit only") +
+      stat("Net profit", fmt(r.netProfitCents, c), "pos") +
+      stat("Net final balance", fmt(r.netFinalCents, c)) +
+      stat("Net ROI", pct(r.netRoi), "pos") +
+      '</div>';
+  }
+
+  html += '<span class="section-tag">Pace</span>';
+  html += '<div class="res-grid">' +
+    stat("Avg profit / day", fmt(perDay, c)) +
+    stat("Day 1 profit", fmt(r.days[0].profitCents, c)) +
+    stat("Last day profit", fmt(r.days[r.days.length - 1].profitCents, c)) +
+    stat("Daily growth", pct(dailyGrowth), "", r.compound ? "compounded per trade" : "flat") +
+    '</div>';
+
+  if (r.riskPct > 0){
+    const riskStart = Math.round(r.capitalCents * r.riskPct / 100);
+    const riskEnd   = Math.round(r.finalCents  * r.riskPct / 100);
+    const rr        = r.profitPct / r.riskPct;
+    const breakEven = r.riskPct / (r.riskPct + r.profitPct) * 100;
+    const halve     = r.riskPct < 100
+      ? Math.ceil(Math.log(0.5) / Math.log(1 - r.riskPct / 100)) : 1;
+    html += '<span class="section-tag">Risk (informational — does not affect the projection)</span>';
+    html += '<div class="res-grid">' +
+      stat("Risk on day 1", fmt(riskStart, c), "neg", pct(r.riskPct) + " of capital") +
+      stat("Risk on last day", fmt(riskEnd, c), "neg", "grows with the balance") +
+      stat("Reward : risk", rr.toFixed(2) + " : 1") +
+      stat("Break-even win rate", pct(breakEven), "", "below this you lose money") +
+      stat("Losses to halve capital", halve.toLocaleString("en-US"), "", "consecutive, at " + pct(r.riskPct)) +
+      '</div>';
+  }
+
+  html += '<div class="banner"><div><b>Every trade wins in this model.</b> Real trading has losing trades, ' +
+          'slippage and variance — treat this as arithmetic, not a forecast.</div></div>';
+
+  if (!r.exact){
+    html += '<div class="banner warn"><div><b>Beyond cent-exact range.</b> The balance passes 90 trillion ' +
+            esc(c) + ', where this arithmetic can no longer track every cent. The magnitude is right; ' +
+            'the last few digits are not.</div></div>';
+  }
+
+  html += '<hr class="hr"><div class="btn-row no-print">' +
+    '<button class="btn sm tonal" id="goTable">View growth table</button>' +
+    '<button class="btn sm ghost" id="copyBtn">Copy result</button>' +
+    '<button class="btn sm ghost" id="shareBtn">Share image</button>' +
+    '<button class="btn sm ghost" id="saveBtn">Save to history</button>' +
+    '<button class="btn sm ghost" id="pdfBtn2">Export PDF</button>' +
+    '</div></div>';
+
+  out.innerHTML = html;
+  out.classList.remove("hidden");
+  $("#goTable").addEventListener("click", () => showTab("table"));
+  $("#copyBtn").addEventListener("click", copyResult);
+  $("#shareBtn").addEventListener("click", shareImage);
+  $("#saveBtn").addEventListener("click", saveToHistory);
+  $("#pdfBtn2").addEventListener("click", exportPDF);
+}
+
+/* -------------------------------- copy --------------------------------- */
+function resultText(r){
+  const c = r.currency;
+  const L = [];
+  L.push("TRADING GROWTH CALCULATOR");
+  L.push("");
+  L.push("Initial capital:   " + fmt(r.capitalCents, c));
+  L.push("Profit per trade:  " + pct(r.profitPct));
+  L.push("Trades per day:    " + r.tradesPerDay);
+  L.push("Days:              " + r.days.length + "  (" + fmtDateS(r.startDate) + " → " + fmtDateS(r.endDate) + ")");
+  L.push("Compounding:       " + (r.compound ? "on (per trade)" : "off (flat)"));
+  L.push("");
+  L.push("WITHOUT FEE");
+  L.push("  Final balance:   " + fmt(r.finalCents, c));
+  L.push("  Total profit:    " + fmt(r.profitCents, c));
+  L.push("  ROI:             " + pct(r.roi) + "  (" + r.multiple.toFixed(2) + "x)");
+  L.push("  Total trades:    " + r.totalTrades);
+  if (r.feePct > 0){
+    L.push("");
+    L.push("WITH " + pct(r.feePct, r.feePct % 1 ? 2 : 0) + " FEE");
+    L.push("  Fee:             " + fmt(r.feeCents, c));
+    L.push("  Net profit:      " + fmt(r.netProfitCents, c));
+    L.push("  Net final:       " + fmt(r.netFinalCents, c));
+  }
+  L.push("");
+  L.push("Calculator only — not connected to any exchange or broker.");
+  return L.join("\n");
+}
+async function copyResult(){
+  if (!RESULT) return;
+  const text = resultText(RESULT);
+  try { await navigator.clipboard.writeText(text); toast("Result copied"); }
+  catch (e){
+    const ta = document.createElement("textarea");
+    ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand("copy"); toast("Result copied"); }
+    catch (e2){ toast("Copy failed — select the text manually"); }
+    document.body.removeChild(ta);
+  }
+}
+
+/* ----------------------------- share as image --------------------------- */
+function shareImage(){
+  if (!RESULT) return;
+  const r = RESULT, c = r.currency, W = 1080;
+
+  const rows = [
+    ["Initial capital", fmt(r.capitalCents, c)],
+    ["Profit per trade", pct(r.profitPct) + "  ×  " + r.tradesPerDay + "/day"],
+    ["Total trades", r.totalTrades.toLocaleString("en-US") + " over " + r.days.length + " days"],
+    ["Total profit", fmt(r.profitCents, c)],
+    ["ROI", pct(r.roi) + "   (" + r.multiple.toFixed(2) + "×)"],
+  ];
+  if (r.feePct > 0){
+    rows.push(["Fee (" + pct(r.feePct, r.feePct % 1 ? 2 : 0) + ")", "-" + fmt(r.feeCents, c)]);
+    rows.push(["Net profit", fmt(r.netProfitCents, c)]);
+    rows.push(["Net final balance", fmt(r.netFinalCents, c)]);
+  }
+  const ROW_H = 74, TOP = 480, FOOT = 150;
+  const H = Math.max(1080, TOP + rows.length * ROW_H + FOOT);
+
+  const cv = document.createElement("canvas");
+  cv.width = W; cv.height = H;
+  const x = cv.getContext("2d");
+
+  const g = x.createLinearGradient(0, 0, W, H);
+  g.addColorStop(0, "#3c2a75"); g.addColorStop(1, "#171522");
+  x.fillStyle = g; x.fillRect(0, 0, W, H);
+
+  const F = (w, s) => w + " " + s + "px -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif";
+  x.textBaseline = "alphabetic";
+
+  x.fillStyle = "#d0bcff"; x.font = F(700, 30);
+  x.fillText("TRADING GROWTH", 80, 130);
+  x.fillStyle = "rgba(255,255,255,.55)"; x.font = F(500, 26);
+  x.fillText(fmtDateS(r.startDate) + "  →  " + fmtDateS(r.endDate), 80, 175);
+
+  x.fillStyle = "rgba(255,255,255,.55)"; x.font = F(600, 24);
+  x.fillText("FINAL BALANCE", 80, 285);
+  x.fillStyle = "#8ff0ad"; x.font = F(700, 96);
+  x.fillText(fmt(r.finalCents, c), 80, 385);
+
+  let y = TOP;
+  rows.forEach(([k, v]) => {
+    x.fillStyle = "rgba(255,255,255,.12)"; x.fillRect(80, y - 4, W - 160, 1);
+    y += 52;
+    x.fillStyle = "rgba(255,255,255,.60)"; x.font = F(500, 28); x.textAlign = "left";
+    x.fillText(k, 80, y);
+    x.fillStyle = "#ffffff"; x.font = F(700, 30); x.textAlign = "right";
+    x.fillText(v, W - 80, y);
+    x.textAlign = "left"; y += 22;
+  });
+
+  x.fillStyle = "rgba(255,255,255,.35)"; x.font = F(400, 21);
+  x.fillText("Compound calculator — not a trading prediction.", 80, H - 80);
+  x.fillText("No exchange, broker or wallet connection.", 80, H - 48);
+
+  const name = fileBase(r) + ".png";
+  cv.toBlob(async blob => {
+    if (!blob){ toast("Could not render the image"); return; }
+    const file = new File([blob], name, { type:"image/png" });
+    if (navigator.canShare && navigator.canShare({ files:[file] })){
+      try { await navigator.share({ files:[file], title:"Trading growth" }); return; }
+      catch (e){ if (e && e.name === "AbortError") return; }
+    }
+    downloadBlob(blob, name);
+    toast("Image saved");
+  }, "image/png");
+}
+
+function downloadBlob(blob, name){
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+
+/* ================================= TABLE ================================ */
+function renderTable(){
+  const box = $("#tableOut");
+  if (!RESULT){
+    box.innerHTML = '<div class="card"><div class="empty">Nothing to show yet — run a calculation on the Calculator tab.</div></div>';
+    $("#tableSub").textContent = "Run a calculation first.";
+    return;
+  }
+  const r = RESULT, c = r.currency;
+  $("#tableSub").textContent = fmt(r.capitalCents, c) + " · " + pct(r.profitPct) + "/trade · " +
+    r.tradesPerDay + " trades/day · " + r.days.length + " days · " +
+    (r.feePct > 0 ? pct(r.feePct, r.feePct % 1 ? 2 : 0) + " fee" : "no fee");
+
+  const H = [];
+  H.push('<div class="card">');
+  H.push('<div class="tablebox"><table><thead><tr>');
+
+  if (TABLE_VIEW === "daily"){
+    H.push('<th>Day</th><th>Date</th><th>Start balance</th><th>Daily profit</th><th>End balance</th>');
+    H.push('</tr></thead><tbody>');
+    r.days.forEach(d => {
+      H.push('<tr><td>' + d.day + '</td><td>' + esc(fmtDate(d.date)) + '</td><td>' +
+        esc(money(d.startCents)) + '</td><td class="pos">' + esc(money(d.profitCents)) + '</td><td>' +
+        esc(money(d.endCents)) + '</td></tr>');
+    });
+  } else {
+    H.push('<th>Day</th><th>Trade</th><th>Start</th><th>Profit</th><th>End</th>');
+    H.push('</tr></thead><tbody>');
+    r.days.forEach(d => {
+      H.push('<tr class="daybreak"><td colspan="5">Day ' + d.day + ' — ' + esc(fmtDate(d.date)) +
+             ' &nbsp;·&nbsp; opens ' + esc(money(d.startCents)) + '</td></tr>');
+      d.trades.forEach(t => {
+        H.push('<tr><td>' + d.day + '</td><td>' + t.t + '</td><td>' + esc(money(t.startCents)) +
+          '</td><td class="pos">' + esc(money(t.profitCents)) + '</td><td>' + esc(money(t.endCents)) + '</td></tr>');
+      });
+      H.push('<tr class="daytotal"><td colspan="2">Day ' + d.day + ' total</td><td>' +
+             esc(money(d.startCents)) + '</td><td>' + esc(money(d.profitCents)) + '</td><td>' +
+             esc(money(d.endCents)) + '</td></tr>');
+    });
+  }
+  H.push('</tbody></table></div>');
+  H.push('<p class="scroll-note">Amounts in ' + esc(r.currency) + '. Balances round to 2 decimals after each trade — ' +
+         'that rounded balance is what the next trade compounds.</p>');
+  H.push('</div>');
+  box.innerHTML = H.join("");
+}
+
+/* --------------------------------- CSV ---------------------------------- */
+function exportCSV(){
+  if (!RESULT){ toast("Run a calculation first"); return; }
+  const r = RESULT, q = s => '"' + String(s).replace(/"/g, '""') + '"';
+  const L = [];
+  L.push(q("Trading Growth Calculator"));
+  L.push(q("Initial capital") + "," + q(money(r.capitalCents) + " " + r.currency));
+  L.push(q("Profit per trade") + "," + q(pct(r.profitPct)));
+  L.push(q("Trades per day") + "," + r.tradesPerDay);
+  L.push(q("Days") + "," + r.days.length);
+  L.push(q("Compounding") + "," + q(r.compound ? "per trade" : "off"));
+  L.push(q("Fee") + "," + q(pct(r.feePct)));
+  L.push("");
+  if (TABLE_VIEW === "daily"){
+    L.push(["Day","Date","Start balance","Daily profit","End balance"].map(q).join(","));
+    r.days.forEach(d => L.push([d.day, fmtDateS(d.date), money(d.startCents), money(d.profitCents), money(d.endCents)]
+      .map(q).join(",")));
+  } else {
+    L.push(["Day","Date","Trade","Start","Profit","End"].map(q).join(","));
+    r.days.forEach(d => d.trades.forEach(t =>
+      L.push([d.day, fmtDateS(d.date), t.t, money(t.startCents), money(t.profitCents), money(t.endCents)]
+        .map(q).join(","))));
+  }
+  L.push("");
+  L.push(q("Final balance") + "," + q(money(r.finalCents)));
+  L.push(q("Total profit") + "," + q(money(r.profitCents)));
+  L.push(q("Fee") + "," + q(money(r.feeCents)));
+  L.push(q("Net profit") + "," + q(money(r.netProfitCents)));
+  L.push(q("Net final balance") + "," + q(money(r.netFinalCents)));
+  downloadBlob(new Blob(["﻿" + L.join("\r\n")], { type:"text/csv;charset=utf-8" }), fileBase(r) + ".csv");
+  toast("CSV exported");
+}
+$("#csvBtn").addEventListener("click", exportCSV);
+$("#pdfBtn").addEventListener("click", exportPDF);
+
+function fileBase(r){
+  return "Growth_" + Math.round(r.capitalCents / 100) + r.currency + "_" +
+         r.days.length + "Days_" + r.tradesPerDay + "Trades";
+}
+
+/* =============================== PDF WRITER ============================= */
+/* Minimal PDF 1.4 generator using the 14 built-in fonts — no libraries, so
+   the app stays completely offline. Helvetica for labels (left aligned),
+   Courier for figures (fixed 0.6em advance, so right-aligning is exact).   */
+const WINANSI_EXTRA = { "€":128, "‚":130, "ƒ":131, "„":132, "…":133,
+  "†":134, "‡":135, "ˆ":136, "‰":137, "Š":138, "‹":139, "Œ":140,
+  "Ž":142, "‘":145, "’":146, "“":147, "”":148, "•":149, "–":150,
+  "—":151, "˜":152, "™":153, "š":154, "›":155, "œ":156, "ž":158,
+  "Ÿ":159 };
+function pdfStr(s){
+  let o = "";
+  for (const ch of String(s)){
+    let cp = ch.codePointAt(0);
+    if (cp > 126){
+      if (WINANSI_EXTRA[ch] !== undefined) cp = WINANSI_EXTRA[ch];
+      else if (cp > 255) { o += "?"; continue; }
+    }
+    if (cp === 40 || cp === 41 || cp === 92) o += "\\" + String.fromCharCode(cp);
+    else if (cp < 32 || cp > 126) o += "\\" + cp.toString(8).padStart(3, "0");
+    else o += String.fromCharCode(cp);
+  }
+  return "(" + o + ")";
+}
+
+function PdfDoc(){
+  const PW = 595.28, PH = 841.89, M = 42;
+  const pages = [];
+  let buf = "", y = 0;
+
+  const api = {
+    PW, PH, M,
+    get y(){ return y; },
+    set y(v){ y = v; },
+    pageCount(){ return pages.length + (buf ? 1 : 0); },
+    newPage(){ if (buf) pages.push(buf); buf = ""; y = PH - M; },
+    /* font: 1 Helvetica, 2 Helvetica-Bold, 3 Courier, 4 Courier-Bold */
+    text(s, x, yy, size, font, gray){
+      if (gray !== undefined) buf += gray.toFixed(3) + " g\n";
+      buf += "BT /F" + (font || 1) + " " + size + " Tf 1 0 0 1 " +
+             x.toFixed(2) + " " + yy.toFixed(2) + " Tm " + pdfStr(s) + " Tj ET\n";
+      if (gray !== undefined) buf += "0 g\n";
+    },
+    /* Courier advance is exactly 600/1000 em */
+    textRight(s, xRight, yy, size, font, gray){
+      api.text(s, xRight - String(s).length * size * 0.6, yy, size, font || 3, gray);
+    },
+    rect(x, yy, w, h, gray){ buf += gray.toFixed(3) + " g\n" + x.toFixed(2) + " " + yy.toFixed(2) +
+      " " + w.toFixed(2) + " " + h.toFixed(2) + " re f\n0 g\n"; },
+    rectRGB(x, yy, w, h, r, g, b){ buf += [r,g,b].map(v => v.toFixed(3)).join(" ") + " rg\n" +
+      x.toFixed(2) + " " + yy.toFixed(2) + " " + w.toFixed(2) + " " + h.toFixed(2) + " re f\n0 g\n"; },
+    line(x1, y1, x2, y2, gray, w){
+      buf += (gray === undefined ? 0.75 : gray).toFixed(3) + " G\n" + (w || 0.5) + " w\n" +
+        x1.toFixed(2) + " " + y1.toFixed(2) + " m " + x2.toFixed(2) + " " + y2.toFixed(2) + " l S\n0 G\n";
+    },
+    build(){
+      if (buf) { pages.push(buf); buf = ""; }
+      const n = pages.length;
+      const objs = [];                                  // objs[i] is object number i+1
+      objs.push(null);                                  // 1 catalog
+      objs.push(null);                                  // 2 pages
+      for (let i = 0; i < n; i++) objs.push(null);      // 3 .. 2+n   page objects
+      for (let i = 0; i < n; i++) objs.push(null);      // 3+n .. 2+2n content
+      const F = 3 + 2 * n;                              // fonts F .. F+3
+      const kids = [];
+      for (let i = 0; i < n; i++) kids.push((3 + i) + " 0 R");
+      objs[0] = "<< /Type /Catalog /Pages 2 0 R >>";
+      objs[1] = "<< /Type /Pages /Count " + n + " /Kids [" + kids.join(" ") + "] >>";
+      const fontRes = "<< /F1 " + F + " 0 R /F2 " + (F+1) + " 0 R /F3 " + (F+2) + " 0 R /F4 " + (F+3) + " 0 R >>";
+      for (let i = 0; i < n; i++){
+        objs[2 + i] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 " + PW.toFixed(2) + " " + PH.toFixed(2) +
+          "] /Resources << /Font " + fontRes + " >> /Contents " + (3 + n + i) + " 0 R >>";
+        const s = pages[i];
+        objs[2 + n + i] = "<< /Length " + s.length + " >>\nstream\n" + s + "\nendstream";
+      }
+      ["Helvetica","Helvetica-Bold","Courier","Courier-Bold"].forEach(f =>
+        objs.push("<< /Type /Font /Subtype /Type1 /BaseFont /" + f + " /Encoding /WinAnsiEncoding >>"));
+
+      let out = "%PDF-1.4\n";
+      const offs = [];
+      objs.forEach((o, i) => { offs.push(out.length); out += (i + 1) + " 0 obj\n" + o + "\nendobj\n"; });
+      const xref = out.length;
+      out += "xref\n0 " + (objs.length + 1) + "\n0000000000 65535 f \n";
+      offs.forEach(o => { out += String(o).padStart(10, "0") + " 00000 n \n"; });
+      out += "trailer\n<< /Size " + (objs.length + 1) + " /Root 1 0 R >>\nstartxref\n" + xref + "\n%%EOF";
+      /* Everything above is ASCII-only, so char offsets equal byte offsets. */
+      const bytes = new Uint8Array(out.length);
+      for (let i = 0; i < out.length; i++) bytes[i] = out.charCodeAt(i) & 0xff;
+      return new Blob([bytes], { type:"application/pdf" });
+    },
+  };
+  return api;
+}
+
+function exportPDF(){
+  if (!RESULT){ toast("Run a calculation first"); return; }
+  const r = RESULT, c = r.currency;
+  const rowsCount = TABLE_VIEW === "daily" ? r.days.length : r.totalTrades + r.days.length * 2;
+  if (rowsCount > 6000 && !confirm("This table is " + rowsCount.toLocaleString("en-US") +
+      " rows and will make a very large PDF. Continue?")) return;
+
+  const d = PdfDoc(), M = d.M, RIGHT = d.PW - M, LH = 13.2;
+  const gen = new Date();
+  let page = 0;
+
+  function header(){
+    page++;
+    d.newPage();
+    d.rectRGB(0, d.PH - 66, d.PW, 66, 0.404, 0.314, 0.643);   // #6750a4
+    d.text("Trading Growth Calculator", M, d.PH - 34, 17, 2, 1);
+    d.text("Compound projection — calculator only, no broker connection.", M, d.PH - 50, 8.5, 1, 0.88);
+    d.textRight("Page " + page, RIGHT, d.PH - 34, 9, 3, 1);
+    d.y = d.PH - 92;
+  }
+  function ensure(need){ if (d.y - need < M + 26) { footer(); header(); return true; } return false; }
+  function footer(){
+    d.line(M, M + 20, RIGHT, M + 20, 0.85);
+    d.text("Generated " + gen.toLocaleString(), M, M + 8, 8, 1, 0.45);
+    d.textRight(fileBase(r), RIGHT, M + 8, 8, 3, 0.45);
+  }
+
+  header();
+
+  /* ---- summary block ---- */
+  const kv = (label, value, bold) => {
+    d.text(label, M, d.y, 9.5, 1, 0.42);
+    d.textRight(value, RIGHT, d.y, 9.5, bold ? 4 : 3, bold ? 0 : 0.1);
+    d.y -= LH;
+  };
+  const sectionTitle = t => {
+    d.y -= 6;
+    ensure(30);
+    d.text(t.toUpperCase(), M, d.y, 8.5, 2, 0.40);
+    d.y -= 5;
+    d.line(M, d.y, RIGHT, d.y, 0.82);
+    d.y -= 13;
+  };
+
+  sectionTitle("Settings");
+  kv("Initial capital", fmtPdf(r.capitalCents, c));
+  kv("Profit per trade", pct(r.profitPct));
+  kv("Trades per day", String(r.tradesPerDay));
+  kv("Number of days", String(r.days.length) + "  (" + fmtDateS(r.startDate) + " - " + fmtDateS(r.endDate) + ")");
+  kv("Compounding", r.compound ? "On - per trade" : "Off - flat profit");
+  kv("Fee", r.feePct > 0 ? pct(r.feePct) + " of profit" : "None");
+  if (r.riskPct > 0) kv("Risk per trade", pct(r.riskPct) + "  (" + (r.profitPct / r.riskPct).toFixed(2) + " : 1 reward-risk)");
+
+  sectionTitle("Result without fee");
+  kv("Total trades", r.totalTrades.toLocaleString("en-US"));
+  kv("Total profit", fmtPdf(r.profitCents, c));
+  kv("ROI", pct(r.roi) + "   (" + r.multiple.toFixed(2) + "x)");
+  kv("Final balance", fmtPdf(r.finalCents, c), true);
+
+  if (r.feePct > 0){
+    sectionTitle("Result with " + pct(r.feePct, r.feePct % 1 ? 2 : 0) + " fee");
+    kv("Fee amount", "-" + fmtPdf(r.feeCents, c));
+    kv("Net profit", fmtPdf(r.netProfitCents, c));
+    kv("Net final balance", fmtPdf(r.netFinalCents, c), true);
+  }
+
+  /* ---- table ---- */
+  const daily = TABLE_VIEW === "daily";
+  const cols = daily
+    ? [{ t:"Day", x:M, a:"l", w:34 }, { t:"Date", x:M + 34, a:"l" },
+       { t:"Start balance", x:M + 250, a:"r" }, { t:"Daily profit", x:M + 372, a:"r" },
+       { t:"End balance", x:RIGHT, a:"r" }]
+    : [{ t:"Day", x:M, a:"l", w:34 }, { t:"Trade", x:M + 40, a:"l" },
+       { t:"Start", x:M + 250, a:"r" }, { t:"Profit", x:M + 372, a:"r" },
+       { t:"End", x:RIGHT, a:"r" }];
+
+  function tableHead(){
+    d.rect(M - 4, d.y - 4, RIGHT - M + 8, 15, 0.93);
+    cols.forEach(col => {
+      if (col.a === "l") d.text(col.t, col.x, d.y, 8, 2, 0.35);
+      else d.textRight(col.t, col.x, d.y, 8, 2, 0.35);
+    });
+    d.y -= 15;
+  }
+  function row(cells, opts){
+    opts = opts || {};
+    if (ensure(20)) tableHead();
+    if (opts.band) d.rect(M - 4, d.y - 3.5, RIGHT - M + 8, 13.5, opts.band);
+    cells.forEach((cell, i) => {
+      const col = cols[i];
+      const size = opts.size || 8.6;
+      const font = opts.bold ? (col.a === "l" ? 2 : 4) : (col.a === "l" ? 1 : 3);
+      if (col.a === "l") d.text(cell, col.x, d.y, size, font, opts.gray);
+      else d.textRight(cell, col.x, d.y, size, font, opts.gray);
+    });
+    d.y -= LH;
+  }
+
+  d.y -= 8;
+  ensure(60);
+  sectionTitle(daily ? "Growth table - daily view" : "Growth table - trade by trade");
+  tableHead();
+
+  if (daily){
+    r.days.forEach(day => {
+      row([String(day.day), fmtDate(day.date), money(day.startCents), money(day.profitCents), money(day.endCents)]);
+    });
+  } else {
+    r.days.forEach(day => {
+      /* keep a day's band, its trades and its total together where possible,
+         and repeat the column header whenever the break lands here */
+      if (ensure(46)) tableHead();
+      /* day separator band, with the date spelled out */
+      d.rectRGB(M - 4, d.y - 3.5, RIGHT - M + 8, 14, 0.914, 0.867, 1);
+      d.text("Day " + day.day + "  -  " + fmtDate(day.date), M, d.y, 8.6, 2, 0.13);
+      d.textRight("opens " + money(day.startCents), RIGHT, d.y, 8.6, 3, 0.13);
+      d.y -= LH + 1.5;
+      day.trades.forEach(t => {
+        row([String(day.day), String(t.t), money(t.startCents), money(t.profitCents), money(t.endCents)]);
+      });
+      row(["Day " + day.day, "total", money(day.startCents), money(day.profitCents), money(day.endCents)],
+          { band:0.93, bold:true, size:8.2 });
+      d.y -= 4;
+    });
+  }
+
+  d.y -= 6;
+  ensure(46);
+  d.line(M, d.y + 8, RIGHT, d.y + 8, 0.6, 1);
+  d.text("Final balance", M, d.y - 4, 10, 2);
+  d.textRight(fmtPdf(r.finalCents, c), RIGHT, d.y - 4, 10, 4);
+  d.y -= 17;
+  d.text("Total profit", M, d.y - 4, 9.5, 1, 0.42);
+  d.textRight(fmtPdf(r.profitCents, c), RIGHT, d.y - 4, 9.5, 3);
+  d.y -= 15;
+  if (r.feePct > 0){
+    d.text("Fee (" + pct(r.feePct, r.feePct % 1 ? 2 : 0) + ")", M, d.y - 4, 9.5, 1, 0.42);
+    d.textRight("-" + fmtPdf(r.feeCents, c), RIGHT, d.y - 4, 9.5, 3);
+    d.y -= 15;
+    d.text("Net profit after fee", M, d.y - 4, 9.5, 1, 0.42);
+    d.textRight(fmtPdf(r.netProfitCents, c), RIGHT, d.y - 4, 9.5, 3);
+    d.y -= 15;
+    d.text("Net final balance", M, d.y - 4, 10, 2);
+    d.textRight(fmtPdf(r.netFinalCents, c), RIGHT, d.y - 4, 10, 4);
+    d.y -= 17;
+  }
+  footer();
+
+  downloadBlob(d.build(), fileBase(r) + ".pdf");
+  toast("PDF exported");
+}
+
+/* ================================ TARGET ================================ */
+$("#targetBtn").addEventListener("click", () => {
+  const from   = toCents($("#t-capital").value);
+  const to     = toCents($("#t-target").value);
+  const p      = Number($("#t-profit").value) || 0;
+  const tpd    = Math.max(1, Math.floor(Number($("#t-trades").value) || 1));
+  const feePct = Math.min(100, Math.max(0, Number($("#t-fee").value) || 0));
+  const start  = dayFromInput($("#t-start").value);
+  const cur    = $("#i-currency").value;
+  const comp   = $("#i-compound").checked;
+  const out    = $("#targetOut");
+  out.classList.remove("hidden");
+
+  if (from <= 0){ out.innerHTML = '<div class="card"><div class="banner err">Enter a current capital above zero.</div></div>'; return; }
+  if (to <= from){ out.innerHTML = '<div class="card"><div class="banner warn">Your target is already at or below your current capital.</div></div>'; return; }
+  if (p <= 0){ out.innerHTML = '<div class="card"><div class="banner err">Profit per trade must be greater than zero to ever reach the target.</div></div>'; return; }
+
+  const n = tradesToTarget(from, to, p, comp);
+  if (!isFinite(n)){ out.innerHTML = '<div class="card"><div class="banner err">That target is unreachable with these settings.</div></div>'; return; }
+  const days = Math.ceil(n / tpd);
+  const doneDate = addDays(start, days - 1);
+
+  /* Reaching the target *after* the fee is taken needs a bigger gross balance. */
+  const grossNeeded = feePct > 0 && feePct < 100
+    ? from + Math.round((to - from) / (1 - feePct / 100)) : to;
+  const nNet    = feePct > 0 ? tradesToTarget(from, grossNeeded, p, comp) : n;
+  const daysNet = Math.ceil(nNet / tpd);
+
+  let html = '<div class="card">';
+  html += '<span class="section-tag">Target</span>';
+  html += '<div class="headline">' + esc(fmt(to, cur)) + '</div>';
+  html += '<p class="sub" style="margin-top:6px">From ' + esc(fmt(from, cur)) + ' at ' + esc(pct(p)) +
+          ' per trade, ' + tpd + ' trades per day' + (comp ? ', compounding' : ', no compounding') + '.</p>';
+  html += '<div class="res-grid">' +
+    stat("Trades needed", n.toLocaleString("en-US")) +
+    stat("Days needed", days.toLocaleString("en-US"), "", tpd + " trades/day") +
+    stat("Target date", fmtDateS(doneDate), "", "day " + days + ", starting " + fmtDateS(start)) +
+    stat("Growth needed", (to / from).toFixed(2) + "×", "", "+" + pct((to / from - 1) * 100)) +
+    '</div>';
+
+  if (feePct > 0){
+    html += '<span class="section-tag">To keep ' + esc(fmt(to, cur)) + ' after a ' +
+            esc(pct(feePct, feePct % 1 ? 2 : 0)) + ' fee</span>';
+    html += '<div class="res-grid">' +
+      stat("Gross balance needed", fmt(grossNeeded, cur)) +
+      stat("Trades needed", nNet.toLocaleString("en-US"), "", "+" + (nNet - n).toLocaleString("en-US") + " more") +
+      stat("Days needed", daysNet.toLocaleString("en-US"), "", "+" + (daysNet - days) + " more") +
+      stat("Target date", fmtDateS(addDays(start, daysNet - 1))) +
+      '</div>';
+  }
+
+  html += '<div class="banner"><div>Day 1 is <b>' + esc(fmtDate(start)) +
+          '</b>, and every calendar day counts — weekends included. ' +
+          'Trade ' + n.toLocaleString("en-US") + ' lands part-way through day ' + days +
+          (n % tpd ? ' (trade ' + (n % tpd) + ' of ' + tpd + ' that day).' : '.') + '</div></div>';
+
+  html += '<hr class="hr"><div class="btn-row no-print">' +
+          '<button class="btn sm tonal" id="targetToCalc">Build the full table for ' + days + ' days</button></div>';
+  html += '</div>';
+  out.innerHTML = html;
+
+  $("#targetToCalc").addEventListener("click", () => {
+    $("#i-capital").value = (from / 100);
+    $("#i-profit").value  = p;
+    $("#i-trades").value  = tpd;
+    $("#i-days").value    = days;
+    $("#i-fee").value     = feePct;
+    $("#i-start").value   = toInput(start);
+    syncChips(); saveInputs();
+    showTab("calc");
+    $("#calcBtn").click();
+  });
+});
+
+/* ================================ COMPARE =============================== */
+$("#compareBtn").addEventListener("click", () => {
+  const base = readInputs();
+  const list = $("#c-list").value.split(/[,;\s]+/).map(s => toCents(s)).filter(v => v > 0).slice(0, 8);
+  const out  = $("#compareOut");
+  if (!list.length){ out.innerHTML = '<div class="card"><div class="banner err">Enter at least one capital amount.</div></div>'; return; }
+
+  let sims;
+  try { sims = list.map(cents => simulate({ ...base, capitalCents:cents })); }
+  catch (err){ out.innerHTML = '<div class="card"><div class="banner err">' + esc(err.message) + '</div></div>'; return; }
+
+  const c = base.currency;
+  const H = ['<div class="card">'];
+  H.push('<p class="sub">' + esc(pct(base.profitPct)) + ' per trade · ' + base.tradesPerDay +
+         ' trades/day · ' + base.days + ' days · ' +
+         (base.feePct > 0 ? esc(pct(base.feePct, base.feePct % 1 ? 2 : 0)) + ' fee' : 'no fee') + '</p>');
+  H.push('<div class="tablebox"><table><thead><tr><th>Capital</th><th>Final</th><th>Profit</th><th>ROI</th>' +
+         (base.feePct > 0 ? '<th>Fee</th><th>Net profit</th><th>Net final</th>' : '') + '</tr></thead><tbody>');
+  sims.forEach(s => {
+    H.push('<tr><td>' + esc(fmt(s.capitalCents, c)) + '</td><td>' + esc(money(s.finalCents)) +
+      '</td><td class="pos">' + esc(money(s.profitCents)) + '</td><td class="pos">' + esc(pct(s.roi)) + '</td>' +
+      (base.feePct > 0 ? '<td>' + esc(money(s.feeCents)) + '</td><td class="pos">' + esc(money(s.netProfitCents)) +
+        '</td><td>' + esc(money(s.netFinalCents)) + '</td>' : '') + '</tr>');
+  });
+  H.push('</tbody></table></div>');
+  H.push('<p class="scroll-note">ROI is identical for every row — compounding is proportional, so only the absolute ' +
+         'amounts differ. Amounts in ' + esc(c) + '.</p>');
+  H.push('</div>');
+  out.innerHTML = H.join("");
+});
+
+/* ================================ HISTORY =============================== */
+function loadHistory(){
+  try { return JSON.parse(localStorage.getItem(HKEY) || "[]"); } catch (e){ return []; }
+}
+function writeHistory(list){
+  try { localStorage.setItem(HKEY, JSON.stringify(list.slice(0, 100))); }
+  catch (e){ toast("Could not save — device storage is full"); }
+}
+function saveToHistory(){
+  if (!RESULT) return;
+  const r = RESULT;
+  const list = loadHistory();
+  list.unshift({
+    id: Date.now() + "-" + Math.random().toString(36).slice(2, 7),
+    ts: Date.now(),
+    inputs: {
+      capital: r.capitalCents / 100, profit: r.profitPct, risk: r.riskPct,
+      trades: r.tradesPerDay, days: r.days.length, fee: r.feePct,
+      compound: r.compound, currency: r.currency, start: toInput(r.startDate),
+    },
+    final: r.finalCents, profit: r.profitCents, net: r.netFinalCents, roi: r.roi,
+  });
+  writeHistory(list);
+  toast("Saved to history");
+}
+function renderHistory(){
+  const list = loadHistory(), box = $("#historyOut");
+  if (!list.length){ box.innerHTML = '<div class="empty">No saved calculations yet.<br>Run one, then tap “Save to history”.</div>'; return; }
+  const H = ['<div class="list">'];
+  list.forEach(h => {
+    const i = h.inputs, c = i.currency;
+    H.push('<div class="item" data-id="' + esc(h.id) + '">');
+    H.push('<div class="top"><span class="ttl">' + esc(fmt(h.final, c)) + '</span>' +
+           '<span class="when">' + esc(new Date(h.ts).toLocaleString()) + '</span></div>');
+    H.push('<div class="meta">' + esc(fmt(Math.round(i.capital * 100), c)) + ' → ' +
+      esc(fmt(h.final, c)) + ' · ' + esc(pct(i.profit)) + '/trade · ' + i.trades + '/day · ' +
+      i.days + ' days' + (i.fee > 0 ? ' · ' + esc(pct(i.fee, i.fee % 1 ? 2 : 0)) + ' fee → net ' +
+      esc(fmt(h.net, c)) : '') + (i.compound ? '' : ' · no compounding') + '</div>');
+    H.push('<div class="btn-row"><button class="btn sm tonal" data-act="load">Load</button>' +
+           '<button class="btn sm ghost" data-act="del">Delete</button></div>');
+    H.push('</div>');
+  });
+  H.push('</div><div class="btn-row" style="margin-top:14px"><button class="btn sm ghost" id="clearHist">Clear all</button></div>');
+  box.innerHTML = H.join("");
+}
+$("#historyOut").addEventListener("click", onHistoryClick);
+function onHistoryClick(e){
+  if (e.target.closest("#clearHist")){
+    if (confirm("Delete all saved calculations?")) writeHistory([]);
+    renderHistory(); return;
+  }
+  const btn = e.target.closest("button[data-act]");
+  if (!btn) return;
+  const id = btn.closest(".item").dataset.id;
+  const list = loadHistory();
+  const h = list.find(x => x.id === id);
+  if (btn.dataset.act === "del"){
+    writeHistory(list.filter(x => x.id !== id));
+    renderHistory(); toast("Deleted"); return;
+  }
+  if (h){
+    const i = h.inputs;
+    $("#i-capital").value = i.capital; $("#i-profit").value = i.profit;
+    $("#i-risk").value = i.risk || 0;  $("#i-trades").value = i.trades;
+    $("#i-days").value = i.days;       $("#i-fee").value = i.fee;
+    $("#i-compound").checked = !!i.compound;
+    if (i.currency && CUR[i.currency]) $("#i-currency").value = i.currency;
+    if (i.start) $("#i-start").value = i.start;
+    syncChips(); saveInputs();
+    showTab("calc");
+    $("#calcBtn").click();
+  }
+}
+
+/* ============================== FIRST RENDER ============================ */
+renderTable();
+$("#calcBtn").click();
+</script>
+</body>
+</html>
