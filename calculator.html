@@ -161,6 +161,7 @@ tr.daybreak td{
 tr.daytotal td{background:var(--surface2);font-weight:600;font-size:12.5px}
 tr.daytotal td:first-child{color:var(--muted);font-weight:600}
 td.pos{color:var(--ok)}
+td.seq{color:var(--muted);font-weight:600}
 .scroll-note{font-size:11.5px;color:var(--muted);margin:8px 2px 0}
 
 /* ---- history / compare ---- */
@@ -993,16 +994,17 @@ function renderTable(){
         esc(money(d.endCents)) + '</td></tr>');
     });
   } else {
-    H.push('<th>Day</th><th>Trade</th><th>Start</th><th>Profit</th><th>End</th>');
+    H.push('<th>Day</th><th>Trade</th><th>Overall</th><th>Start</th><th>Profit</th><th>End</th>');
     H.push('</tr></thead><tbody>');
     r.days.forEach(d => {
-      H.push('<tr class="daybreak"><td colspan="5">Day ' + d.day + ' — ' + esc(fmtDate(d.date)) +
+      H.push('<tr class="daybreak"><td colspan="6">Day ' + d.day + ' — ' + esc(fmtDate(d.date)) +
              ' &nbsp;·&nbsp; opens ' + esc(money(d.startCents)) + '</td></tr>');
       d.trades.forEach(t => {
-        H.push('<tr><td>' + d.day + '</td><td>' + t.t + '</td><td>' + esc(money(t.startCents)) +
-          '</td><td class="pos">' + esc(money(t.profitCents)) + '</td><td>' + esc(money(t.endCents)) + '</td></tr>');
+        H.push('<tr><td>' + d.day + '</td><td>' + t.t + '</td><td class="seq">' + t.n + '</td><td>' +
+          esc(money(t.startCents)) + '</td><td class="pos">' + esc(money(t.profitCents)) +
+          '</td><td>' + esc(money(t.endCents)) + '</td></tr>');
       });
-      H.push('<tr class="daytotal"><td colspan="2">Day ' + d.day + ' total</td><td>' +
+      H.push('<tr class="daytotal"><td colspan="3">Day ' + d.day + ' total</td><td>' +
              esc(money(d.startCents)) + '</td><td>' + esc(money(d.profitCents)) + '</td><td>' +
              esc(money(d.endCents)) + '</td></tr>');
     });
@@ -1041,9 +1043,9 @@ function exportCSV(){
     r.days.forEach(d => L.push([d.day, fmtDateS(d.date), money(d.startCents), money(d.profitCents), money(d.endCents)]
       .map(q).join(",")));
   } else {
-    L.push(["Day","Date","Trade","Start","Profit","End"].map(q).join(","));
+    L.push(["Day","Date","Trade","Overall trade","Start","Profit","End"].map(q).join(","));
     r.days.forEach(d => d.trades.forEach(t =>
-      L.push([d.day, fmtDateS(d.date), t.t, money(t.startCents), money(t.profitCents), money(t.endCents)]
+      L.push([d.day, fmtDateS(d.date), t.t, t.n, money(t.startCents), money(t.profitCents), money(t.endCents)]
         .map(q).join(","))));
   }
   L.push("");
@@ -1260,8 +1262,9 @@ function exportPDF(){
     ? [{ t:"Day", x:M, a:"l", w:34 }, { t:"Date", x:M + 34, a:"l" },
        { t:"Start balance", x:M + 250, a:"r" }, { t:"Daily profit", x:M + 372, a:"r" },
        { t:"End balance", x:RIGHT, a:"r" }]
-    : [{ t:"Day", x:M, a:"l", w:34 }, { t:"Trade", x:M + 40, a:"l" },
-       { t:"Start", x:M + 250, a:"r" }, { t:"Profit", x:M + 372, a:"r" },
+    : [{ t:"Day", x:M, a:"l", w:34 }, { t:"Trade", x:M + 38, a:"l" },
+       { t:"Overall", x:M + 86, a:"l" },
+       { t:"Start", x:M + 262, a:"r" }, { t:"Profit", x:M + 375, a:"r" },
        { t:"End", x:RIGHT, a:"r" }];
 
   function tableHead(){
@@ -1306,9 +1309,10 @@ function exportPDF(){
       d.textRight("opens " + money(day.startCents), RIGHT, d.y, 8.6, 3, 0.13);
       d.y -= LH + 1.5;
       day.trades.forEach(t => {
-        row([String(day.day), String(t.t), money(t.startCents), money(t.profitCents), money(t.endCents)]);
+        row([String(day.day), String(t.t), String(t.n),
+             money(t.startCents), money(t.profitCents), money(t.endCents)]);
       });
-      row(["Day " + day.day, "total", money(day.startCents), money(day.profitCents), money(day.endCents)],
+      row(["Day " + day.day, "total", "", money(day.startCents), money(day.profitCents), money(day.endCents)],
           { band:0.93, bold:true, size:8.2 });
       d.y -= 4;
     });
