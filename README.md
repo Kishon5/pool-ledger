@@ -20,10 +20,12 @@ A separate, standalone tool in this repo — a compound-growth calculator for tr
 Open `calculator.html` in any browser, or "Add to Home Screen" on Android/iPhone to run it as an offline app. It shares nothing with the pool ledger — no Supabase, no accounts, no setup.
 
 - **Per-trade compounding** — the balance grows by the profit % after *every* trade and is rounded to cents each time, so the next trade compounds the rounded balance and every displayed row adds up exactly. Compounding can be switched off for flat profit per trade.
-- **Results** — final balance, total profit, ROI, total trades; plus fee amount, net profit and net final balance when a fee % is set (the fee is charged on profit only)
+- **Results** — final balance, total profit, ROI, total trades; then, if a fee % is set, what you withdraw, the fee, what reaches your hand, what stays in the account, and net worth after the fee
+- **Fees are charged on whatever you withdraw**, not on profit as a category, with an optional flat minimum that applies when the percentage falls short of it. Choose whether you take out the profit and leave your capital trading, take out everything, or take out nothing — the fee follows.
+- **Withdrawal planner** — enter the amount you need *in your hand* and it solves backwards through the fee to the balance you must reach, then reports the trades and days and builds the growth table for exactly that run, stopping mid-day on the trade that gets you there
 - **Target calculator** — trades needed, days needed and the calendar date you hit a goal, with a second set of figures for keeping the target *after* the fee
 - **Growth table** — daily view, or trade-by-trade with each day separated by a banded header showing the weekday and date, plus a per-day total row
-- **PDF export** — settings, results and the full table, written by a built-in PDF generator (no library, so it works offline); filenames like `Growth_1000USD_60Days_4Trades.pdf`
+- **PDF export** — settings, results and the full table, written by a built-in PDF generator (no library, so it works offline); filenames like `Growth_1000USD_60Days_4Trades.pdf` or `Withdraw_2000USD_39Days_154Trades.pdf`
 - **Also** — CSV export, compare several starting capitals side by side, copy result as text, share as an image, save calculations to device history, 23 currencies, presets, dark mode
 
 Days are calendar days including weekends, and Day 1 is the start date you choose. Risk per trade % is informational — it shows risk amount, reward:risk, break-even win rate and losses-to-halve-capital, and does not affect the projection.
