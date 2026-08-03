@@ -585,6 +585,11 @@ function replayEngine(members, events){
   members.forEach(m=>st[m.id]={bal:0,contrib:0,joined:false,exited:false});
   let bonus = 0;
   const allocByEvent = {};
+  // bonus sub-balance as it stood immediately BEFORE each timeline entry, in
+  // chronological order — lets a proposed bonus withdrawal be judged where it
+  // actually lands in history AND across everything that follows it, which is
+  // the rule validate_event applies in the database
+  const bonusTrail = [];
   const prioOf = t => t==="deposit"||t==="bonus"?1 : t==="trade"?2 : t==="withdrawal"?3 : 4;
   const tl = [];
   members.forEach(m=>tl.push({ot:m.joined_at, prio:0, ct:m.created_at||"", id:m.id, kind:"join", mid:m.id, amt:m.original_capital_c}));
@@ -599,13 +604,17 @@ function replayEngine(members, events){
     : a.ctMs!==b.ctMs ? a.ctMs-b.ctMs
     : String(a.id).localeCompare(String(b.id)));
   for(const ev of tl){
+    bonusTrail.push({ id:ev.id, bal:bonus });
     if(ev.kind==="join"){ const s=st[ev.mid]; if(s){s.joined=true;s.bal+=ev.amt;s.contrib+=ev.amt;} }
     else if(ev.kind==="trade"){
       const parts = members.filter(m=>st[m.id].joined && !st[m.id].exited && st[m.id].bal>0);
       const memberTotal = parts.reduce((a,m)=>a+st[m.id].bal,0);
-      const total = memberTotal + bonus;
+      // a negative bonus counts as $0 in the split — mirrors greatest(v_bonus_c,0)
+      // in recompute_pool, which stops it eating into the members' share
+      const bonusPart = Math.max(bonus, 0);
+      const total = memberTotal + bonusPart;
       if(total<=0){ allocByEvent[ev.id]={skipped:true}; continue; }
-      const bonusShare = divRound(BigInt(ev.pnl)*BigInt(bonus), BigInt(total));
+      const bonusShare = divRound(BigInt(ev.pnl)*BigInt(bonusPart), BigInt(total));
       const rem = ev.pnl - bonusShare;
       const shares = allocate(rem, parts.map(m=>st[m.id].bal), parts.map(m=>m.id));
       allocByEvent[ev.id] = {
@@ -625,7 +634,7 @@ function replayEngine(members, events){
     else if(ev.kind==="exit"){ const s=st[ev.mid]; if(s){s.payout=s.bal;s.realized=s.bal-s.contrib;s.bal=0;s.exited=true;} }
     else if(ev.kind==="bonus"){ bonus+=ev.amt; }
   }
-  return {st, bonus, allocByEvent};
+  return {st, bonus, allocByEvent, bonusTrail};
 }
 
 /* ───────────────────────── boot / auth ───────────────────────── */
@@ -850,6 +859,12 @@ function drawAdmin(){
 function vOverview(P){
   const active = A.members.filter(m=>!A.state[m.id]?.exited);
   const net = P.active_pool_c - P.active_capital_c;
+  // two honest denominators, never mixed inside one list: each member's row is
+  // their share of MEMBER FUNDS (they sum to 100%, and it is exactly the weight
+  // the replay gives them once the bonus has taken its carve-out), while the
+  // totals block below splits the WHOLE pool between members and the bonus.
+  const whole = P.active_pool_c + P.bonus_c;
+  const ofWhole = c => P.bonus_c!==0 && whole>0 ? ` · ${pct(c, whole)}` : "";
   return `
   <div class="cards">
     <div class="panel"><div class="label">Pool balance (active)</div><span class="mono big" title="${fmt(P.active_pool_c)}">${compact(P.active_pool_c)}</span></div>
@@ -859,16 +874,17 @@ function vOverview(P){
     <div class="panel"><div class="label">Total incl. bonus</div><span class="mono big" title="${fmt(P.active_pool_c + P.bonus_c)}">${compact(P.active_pool_c + P.bonus_c)}</span></div>
   </div>
   <div class="panel"><div class="label">Pool balance over time</div>${spark(A.hist.map(h=>h.pool_c), null, {labels:A.hist.map(h=>fmtT(h.t))})}</div>
-  <div class="panel"><div class="label">Ownership breakdown — ${active.length} active member${active.length===1?"":"s"}</div>
+  <div class="panel"><div class="label">Ownership breakdown — ${active.length} active member${active.length===1?"":"s"}${P.bonus_c!==0?" · shares of member funds":""}</div>
     ${active.length? active.map(m=>{const s=A.state[m.id]||{balance_c:0};return `
       <div style="margin-top:10px">
         <div style="display:flex;justify-content:space-between;font-size:13px;gap:8px;flex-wrap:wrap">
           <b>${esc(m.name)}</b><span class="mono" style="white-space:nowrap">${fmt(s.balance_c)} · ${pct(s.balance_c,P.active_pool_c)}</span></div>
         <div class="bar"><i style="width:${P.active_pool_c>0?Math.max(0,100*s.balance_c/P.active_pool_c):0}%"></i></div>
       </div>`;}).join("") : `<div class="muted">No active members yet — add one under Members.</div>`}
-    <div class="dbl" style="border-top-width:1px;font-weight:600"><span>Total member funds</span><span class="mono">${fmt(P.active_pool_c)}</span></div>
-    <div class="dbl" style="border-top:none;padding-top:4px;font-weight:600"><span class="brass">Bonus funds (admin)</span><span class="mono brass">${fmt(P.bonus_c)}</span></div>
-    <div class="dbl"><span>Total pool incl. bonus</span><span class="mono">${fmt(P.active_pool_c + P.bonus_c)}</span></div>
+    <div class="dbl" style="border-top-width:1px;font-weight:600"><span>Total member funds</span><span class="mono">${fmt(P.active_pool_c)}${ofWhole(P.active_pool_c)}</span></div>
+    <div class="dbl" style="border-top:none;padding-top:4px;font-weight:600"><span class="brass">Bonus funds (admin)</span><span class="mono brass">${fmt(P.bonus_c)}${ofWhole(P.bonus_c)}</span></div>
+    <div class="dbl"><span>Total pool incl. bonus</span><span class="mono">${fmt(whole)}</span></div>
+    ${P.bonus_c!==0?`<div class="hint">Each member's percentage above is their share of member funds. The two percentages here split the whole pool — the bonus takes that cut of every trade before members divide the rest.</div>`:""}
   </div>
   <div class="panel"><div class="label">Grant admin to another user (they must already have a login)</div>
     <div class="row"><label><input id="adm-email" type="email" placeholder="email@example.com"></label>
@@ -1320,33 +1336,93 @@ async function delMember(id, ev){
     toast("Member deleted"); await refresh();
   });
 }
+const BONUS_HINT = "Positive tops the bonus up. Negative is what you receive in hand — the broker's withdrawal fee is added on top, exactly as for a member. To share in a trade, give the bonus a time at or before that trade's.";
 function addBonus(){
   const box=$("#bonus-form"); if(!box) return;
   if(box.innerHTML){ box.innerHTML=""; return; }
   box.innerHTML = `<div class="formbox">
     <div class="label">Bonus funds — admin's own money, carved out of each trade's profit first (negative to withdraw)</div>
     <div class="row" style="margin-top:6px">
-      <label><div class="label">Amount ($, negative to withdraw)</div><input id="bonus-amt" type="number" step="0.01"></label>
-      <label><div class="label">When (order time)</div><input id="bonus-when" type="datetime-local" value="${nowLocal()}"></label>
+      <label><div class="label">Amount ($, negative to withdraw)</div><input id="bonus-amt" type="number" step="0.01" oninput="updBonusPreview()"></label>
+      <label><div class="label">Broker fee (%)</div><input id="bonus-rate" type="number" step="0.01" min="0" max="99.99" value="${FEE_RATE_PCT}" oninput="updBonusPreview()" style="width:90px"></label>
+      <label><div class="label">Minimum fee ($)</div><input id="bonus-min" type="number" step="0.01" min="0" value="${(FEE_MIN_C/100).toFixed(2)}" oninput="updBonusPreview()" style="width:90px"></label>
+      <label><div class="label">When (order time)</div><input id="bonus-when" type="datetime-local" value="${nowLocal()}" oninput="updBonusPreview()"></label>
       <button class="btn primary" onclick="saveBonus(event)">Save bonus</button>
       <button class="btn" onclick="$('#bonus-form').innerHTML=''">Cancel</button>
     </div>
-    <div class="hint">To have the bonus share in a trade, give it a time at or before that trade's time.</div></div>`;
+    <div id="bonus-feeprev" class="hint">${BONUS_HINT}</div></div>`;
   const el=$("#bonus-amt"); if(el) el.focus();
 }
+/* what the ledger will store for the typed bonus. Positive is a straight
+   top-up and carries no fee. Negative is what the admin receives IN HAND, so
+   the gross that leaves the pool has the broker fee on top — the same
+   gross-inclusive rule member withdrawals already use. */
+function bonusPlan(){
+  const typed = toC($("#bonus-amt")?.value);
+  if(isNaN(typed) || typed===0) return { msg:null };
+  if(typed>0) return { add:true, amountC:typed, feeC:null, netC:typed };
+  const rate = parseFloat($("#bonus-rate")?.value);
+  const minC = toC($("#bonus-min")?.value);
+  if(!(rate>=0 && rate<100)) return { msg:"Fee rate must be between 0 and 99.99%." };
+  if(!(minC>=0)) return { msg:"Minimum fee must be $0 or more." };
+  const grossC = grossForNet(-typed, rate, minC);
+  const feeC   = brokerFee(grossC, rate, minC);
+  return { add:false, amountC:-grossC, feeC, netC:grossC-feeC, grossC, rate, minC,
+           minApplied: feeC===minC && Math.round(grossC*rate/100)<minC };
+}
+/* Replay the proposed bonus at its real place in history and report both the
+   balance it lands on and the LOWEST the bonus ever gets from there on. The
+   low point is what matters: a backdated withdrawal shifts every later balance
+   down and can overdraw a withdrawal that was fine before it — the same thing
+   validate_event checks, except this reruns the trade splits exactly. */
+function bonusOutlook(iso, amountC){
+  const probe = { id:"__bonus_probe__", type:"bonus", order_time:iso,
+    created_at:new Date().toISOString(), pnl_c:null, member_id:null,
+    amount_c:amountC, deleted:false };
+  const R = replayEngine(A.members, [...A.events, probe]);
+  const i = R.bonusTrail.findIndex(x=>x.id==="__bonus_probe__");
+  if(i<0) return { at:0, low:amountC };
+  let low = R.bonus;                                   // balance at the very end
+  for(let j=i+1; j<R.bonusTrail.length; j++) low = Math.min(low, R.bonusTrail[j].bal);
+  return { at:R.bonusTrail[i].bal, low };
+}
+function updBonusPreview(){
+  const box = $("#bonus-feeprev"); if(!box) return;
+  const p = bonusPlan();
+  if(!p.amountC){ box.innerHTML = esc(p.msg || BONUS_HINT); return; }
+  const t = isoFrom($("#bonus-when")?.value);
+  if(!t){ box.innerHTML = "Pick a valid date and time."; return; }
+  const { at, low } = bonusOutlook(t, p.amountC);
+  if(p.add){
+    box.innerHTML = `Adds <b class="mono">${fmt(p.amountC)}</b> to the bonus at that moment:
+      <b class="mono brass">${fmt(at)}</b> → <b class="mono brass">${fmt(at+p.amountC)}</b>.`;
+    return;
+  }
+  box.innerHTML = `Withdraw <b class="mono">${fmt(p.grossC)}</b> from the broker
+    → fee <b class="mono">${fmt(p.feeC)}</b> ${p.minApplied?`(minimum ${fmt(p.minC)} fee applies)`:`(${p.rate}% of gross)`}
+    → you receive <b class="mono">${fmt(p.netC)}</b>.
+    Bonus at that moment: <b class="mono brass">${fmt(at)}</b> → <b class="mono brass">${fmt(at-p.grossC)}</b>.
+    ${low<0
+      ? `<div style="margin-top:4px;color:var(--warn)">This takes the bonus to ${fmt(low)} ${at-p.grossC===low?"":"at a later point in history "}— the database will reject it, because a negative bonus stops counting in trade splits. Reduce the gross by ${fmt(-low)}.</div>`
+      : ""}`;
+}
 async function saveBonus(ev){
-  const c=toC($("#bonus-amt").value);
-  if(!c||isNaN(c)) return toast("Enter a non-zero amount.");
+  const p = bonusPlan();
+  if(p.msg) return toast(p.msg);
+  if(!p.amountC) return toast("Enter a non-zero amount.");
   const t=isoFrom($("#bonus-when").value);
   if(!t) return toast("Pick a valid date and time.");
-  const curBonus = A.pool?.bonus_c ?? 0;
-  if(c<0 && curBonus + c < 0
-     && !confirm(`Withdrawing ${fmt(-c)} is more than the current bonus balance (${fmt(curBonus)}) and would take it negative. Save anyway?`)) return;
+  const { at, low } = bonusOutlook(t, p.amountC);
+  if(!p.add && low < 0 && !confirm(
+    `Including the ${fmt(p.feeC)} broker fee this takes ${fmt(p.grossC)} out of the bonus, which held ${fmt(at)} at ${fmtT(t)}. The bonus reaches ${fmt(low)}${at-p.grossC===low?"":" at a later point in history"}, so the database will reject it. Try anyway?`)) return;
   await once(ev, async ()=>{
-    const { error } = await sb.from("events").insert({ type:"bonus", amount_c:c, order_time:t });
+    const { error } = await sb.from("events").insert({
+      type:"bonus", amount_c:p.amountC, fee_c:p.feeC, order_time:t });
     if(error) return err(error);
     const box=$("#bonus-form"); if(box) box.innerHTML="";
-    toast(`Bonus ${fmt(c,true)} recorded`); await refresh();
+    toast(p.add ? `Bonus ${fmt(p.amountC,true)} recorded`
+                : `Bonus withdrawal saved — ${fmt(p.grossC)} from broker (${fmt(p.feeC)} fee), ${fmt(p.netC)} in hand`);
+    await refresh();
   });
 }
 
@@ -1599,7 +1675,10 @@ function vTrades(){
         const note = e.type==="join" ? " · initial capital"
                    : e.type==="exit" ? " · full payout" + (e.fee_c!=null?` · ~${fmt(e.fee_c)} broker fee`:"")
                    : e.type==="withdrawal" && e.fee_c!=null
-                     ? ` · ${fmt(e.amount_c-e.fee_c)} received + ${fmt(e.fee_c)} broker fee` : "";
+                     ? ` · ${fmt(e.amount_c-e.fee_c)} received + ${fmt(e.fee_c)} broker fee`
+                   // a bonus withdrawal stores the gross as a negative amount_c
+                   : e.type==="bonus" && e.fee_c!=null
+                     ? ` · ${fmt(-e.amount_c-e.fee_c)} received + ${fmt(e.fee_c)} broker fee` : "";
         return `<div class="line" ${e.type==="trade"?`style="cursor:pointer" onclick="toggleAlloc('${e.id}')"`:""}>
           <div><span class="tag ${e.type}">${e.type}</span>${new Date(e.order_time).toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"})}${e.member_id?` · ${esc(nameOf(e.member_id))}`:""}${esc(note)}${e.type==="trade"?" · ▾ split":""}</div>
           <div style="display:flex;gap:8px;align-items:center">

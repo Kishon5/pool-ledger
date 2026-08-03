@@ -13,6 +13,10 @@
 -- v2.3: withdrawal/exit events may carry fee_c — the broker's withdrawal
 -- fee already contained in the gross amount_c. Display-only metadata:
 -- the replay math is unchanged (balances move by the gross).
+-- v2.4: bonus withdrawals may carry fee_c too (same gross-inclusive rule),
+-- a bonus may no longer be withdrawn below zero at its own point in time,
+-- and a bonus that IS negative (legacy data, restored backup) counts as $0
+-- when splitting a trade — it must never shrink the members' share.
 -- ============================================================
 
 -- ---------- core tables ----------
@@ -40,7 +44,7 @@ create table if not exists events (
   pnl_c bigint,                             -- trades only (may be negative)
   member_id uuid references members(id) on delete cascade,
   amount_c bigint,                          -- deposit/withdrawal/bonus
-  fee_c bigint,                             -- withdrawal/exit: broker fee inside amount_c (display only)
+  fee_c bigint,                             -- withdrawal/exit/bonus withdrawal: broker fee inside amount_c (display only)
   deleted boolean not null default false,   -- soft delete (Trash)
   created_by uuid default auth.uid()
 );
@@ -200,6 +204,7 @@ language plpgsql security definer set search_path = public as $$
 declare
   ev record;
   v_bonus_c bigint := 0;
+  v_bonus_part bigint;
   v_member_total bigint;
   v_total bigint;
   v_bonus_share bigint;
@@ -244,7 +249,12 @@ begin
     elsif ev.etype = 'trade' then
       select coalesce(sum(bal_c),0) into v_member_total
         from st where joined and not exited and bal_c > 0;
-      v_total := v_member_total + v_bonus_c;
+      -- a negative bonus sub-balance (legacy data, or a restored backup —
+      -- validate_event blocks it going forward) contributes NOTHING to the
+      -- split. Adding it to the total would shrink every member's share, and
+      -- once it outweighed the members it silently voided the whole trade.
+      v_bonus_part := greatest(v_bonus_c, 0);
+      v_total := v_member_total + v_bonus_part;
       if v_total <= 0 then
         insert into replay_warnings(event_id, msg)
           values (ev.eid, 'Trade at ' || ev.ot || ' skipped — pool was $0 at that moment.');
@@ -255,7 +265,7 @@ begin
           values (ev.eid, 'Trade at ' || ev.ot || ' loses more than the pool held — balances went negative.');
       end if;
       -- 1) bonus sub-balance takes its proportional share FIRST (never divided among members)
-      v_bonus_share := round((ev.pnl::numeric * v_bonus_c) / v_total)::bigint;
+      v_bonus_share := round((ev.pnl::numeric * v_bonus_part) / v_total)::bigint;
       v_rem := ev.pnl - v_bonus_share;
       -- 2) largest-remainder split of the remainder across participants by balance
       delete from tmp_alloc where true;
@@ -315,7 +325,8 @@ begin
     elsif ev.etype = 'bonus' then
       v_bonus_c := v_bonus_c + ev.amt;
       if v_bonus_c < 0 then
-        insert into replay_warnings(event_id,msg) values (ev.eid, 'Bonus balance went negative at '||ev.ot||'.');
+        insert into replay_warnings(event_id,msg) values (ev.eid,
+          'Bonus balance went negative at '||ev.ot||' — it counts as $0 in every later trade split until it is topped back up.');
       end if;
     end if;
 
@@ -353,7 +364,7 @@ end $$;
 --  backup may contain events that today's state would reject)
 create or replace function validate_event() returns trigger
 language plpgsql security definer set search_path = public as $$
-declare v_avail bigint; v_pool bigint; v_exited boolean;
+declare v_avail bigint; v_pool bigint; v_exited boolean; v_bonus bigint;
 begin
   if current_setting('app.restore', true) = 'on' then return new; end if;
   if new.type = 'trade' then
@@ -386,6 +397,49 @@ begin
     end if;
   elsif new.type = 'bonus' then
     if new.amount_c is null or new.amount_c = 0 then raise exception 'Bonus amount required.'; end if;
+    -- bonus funds are the admin's own sub-balance, not a member's. A stray
+    -- member_id would expose the event to that member through the events_self
+    -- RLS policy even though the replay ignores it.
+    if new.member_id is not null then
+      raise exception 'Bonus funds belong to the pool, not to a member — leave member_id empty.';
+    end if;
+    if new.amount_c < 0 then
+      -- LOWEST bonus balance from this event's own moment onwards. Checking only
+      -- the balance where the event lands is not enough: a backdated withdrawal
+      -- shifts every later balance down too, which can overdraw a withdrawal
+      -- that was fine before it was inserted. Replay order is (order_time,
+      -- type priority, created_at), so a bonus at the same instant as a trade
+      -- counts before it — hence prio 1 for bonus rows and 2 for trade shares.
+      -- Later trade shares are read as they stand today; they shrink slightly
+      -- once the smaller bonus is replayed, so this is a close approximation
+      -- rather than an exact bound. The greatest(v_bonus_c,0) clamp inside
+      -- recompute_pool is what actually keeps members whole either way.
+      with tl as (
+        select order_time as ot, 1 as prio, created_at as ct, amount_c as delta
+          from events where type = 'bonus' and not deleted
+        union all
+        select order_time, 2, order_time, share_c
+          from trade_allocations where member_id is null
+      ), running as (
+        select ot, prio, sum(delta) over (order by ot, prio, ct) as bal from tl
+      )
+      select least(
+        -- balance the moment before this event is applied
+        coalesce((select bal from running where (ot, prio) <= (new.order_time, 1)
+                   order by ot desc, prio desc limit 1), 0),
+        -- and every balance after it (least() ignores a null from no later rows)
+        (select min(bal) from running where (ot, prio) > (new.order_time, 1))
+      ) into v_bonus;
+      if -new.amount_c > v_bonus then
+        raise exception 'Bonus withdrawal exceeds the bonus balance available from that moment on: % cents. A negative bonus would stop counting in later trade splits.', v_bonus;
+      end if;
+    end if;
+    -- broker fee sits INSIDE the gross, exactly as for a member withdrawal
+    if new.fee_c is not null then
+      if new.fee_c < 0 then raise exception 'Broker fee cannot be negative.'; end if;
+      if new.amount_c > 0 then raise exception 'A broker fee only applies to a bonus withdrawal.'; end if;
+      if new.fee_c >= -new.amount_c then raise exception 'Broker fee must be smaller than the withdrawal amount.'; end if;
+    end if;
   end if;
   return new;
 end $$;
