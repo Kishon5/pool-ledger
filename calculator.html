@@ -419,10 +419,19 @@ footer.foot{color:var(--muted);font-size:12px;text-align:center;padding:22px 14p
     <h2>Compare capitals</h2>
     <p class="sub">Same settings, different starting amounts — side by side.</p>
     <div class="field">
-      <label for="c-list">Capitals <span class="hint">(comma separated)</span></label>
+      <label for="c-list">Capitals <span class="hint">(comma separated, up to 6)</span></label>
       <input id="c-list" type="text" inputmode="decimal" value="500, 1000, 5334, 10000">
     </div>
     <p class="sub" style="margin-top:10px" id="c-note"></p>
+    <div class="chips" data-preset="cview">
+      <button class="chip" data-v="summary" aria-pressed="true">Summary</button>
+      <button class="chip" data-v="daily">Daily view</button>
+      <button class="chip" data-v="trade">Trade view</button>
+    </div>
+    <div class="btn-row no-print" style="margin-top:14px">
+      <button class="btn sm tonal" id="cPdfBtn">Export PDF</button>
+      <button class="btn sm ghost" id="cCsvBtn">Export CSV</button>
+    </div>
     <hr class="hr">
     <button class="btn wide" id="compareBtn">Compare</button>
   </div>
@@ -499,6 +508,10 @@ const money = cents => {
 const fmt     = (cents, code) => (cents < 0 ? "-" : "") + (CUR[code] || CUR.USD).sym + money(Math.abs(cents));
 const fmtPdf  = (cents, code) => (cents < 0 ? "-" : "") + pdfSym(code) + money(Math.abs(cents));
 const pct     = (x, d) => (x).toFixed(d === undefined ? 2 : d) + "%";
+/* Compact label for comparison column headers — drops cents so the columns stay narrow. */
+const fmtShort = (cents, code) => (CUR[code] || CUR.USD).sym +
+  Math.round(cents / 100).toLocaleString("en-US");
+const pdfShort = (cents, code) => pdfSym(code) + Math.round(cents / 100).toLocaleString("en-US");
 const toCents = v => Math.round((Number(v) || 0) * 100);
 
 /* --------------------------------- dates -------------------------------- */
@@ -632,7 +645,9 @@ function tradesToTarget(fromCents, toCents, profitPct, compound){
 
 /* ================================= STATE ================================ */
 let RESULT = null;         // last full simulation
+let COMPARE = null;        // { sims, base } from the compare tab
 let TABLE_VIEW = "daily";
+let COMPARE_VIEW = "summary";
 const HKEY = "tgc.history.v1", TKEY = "tgc.theme.v1", IKEY = "tgc.inputs.v1";
 
 const toastEl = $("#toast");
@@ -731,6 +746,12 @@ $$("[data-preset]").forEach(group => {
       TABLE_VIEW = chip.dataset.v;
       $$('[data-preset="view"] .chip').forEach(c => c.setAttribute("aria-pressed", String(c === chip)));
       renderTable();
+      return;
+    }
+    if (key === "cview"){
+      COMPARE_VIEW = chip.dataset.v;
+      $$('[data-preset="cview"] .chip').forEach(c => c.setAttribute("aria-pressed", String(c === chip)));
+      renderCompare();
       return;
     }
     $(PRESET_FIELD[key]).value = chip.dataset.v;
@@ -1579,7 +1600,7 @@ $("#withdrawBtn").addEventListener("click", () => {
 /* ================================ COMPARE =============================== */
 $("#compareBtn").addEventListener("click", () => {
   const base = readInputs();
-  const list = $("#c-list").value.split(/[,;\s]+/).map(s => toCents(s)).filter(v => v > 0).slice(0, 8);
+  const list = $("#c-list").value.split(/[,;\s]+/).map(s => toCents(s)).filter(v => v > 0).slice(0, 6);
   const out  = $("#compareOut");
   if (!list.length){ out.innerHTML = '<div class="card"><div class="banner err">Enter at least one capital amount.</div></div>'; return; }
 
@@ -1587,25 +1608,249 @@ $("#compareBtn").addEventListener("click", () => {
   try { sims = list.map(cents => simulate({ ...base, capitalCents:cents })); }
   catch (err){ out.innerHTML = '<div class="card"><div class="banner err">' + esc(err.message) + '</div></div>'; return; }
 
-  const c = base.currency;
+  COMPARE = { sims, base };
+  renderCompare();
+});
+
+/* Every run shares the same settings, so the day/trade grid is identical
+   across capitals — sims[0] drives the rows and the rest index into it. */
+function renderCompare(){
+  const out = $("#compareOut");
+  if (!COMPARE){
+    out.innerHTML = '<div class="card"><div class="empty">Nothing to compare yet — enter some capitals and tap Compare.</div></div>';
+    return;
+  }
+  const { sims, base } = COMPARE, c = base.currency, grid = sims[0].days;
+  const head = sims.map(s => esc(fmtShort(s.capitalCents, c)));
+
   const H = ['<div class="card">'];
   H.push('<p class="sub">' + esc(pct(base.profitPct)) + ' per trade · ' + base.tradesPerDay +
-         ' trades/day · ' + base.days + ' days · ' +
+         ' trades/day · ' + grid.length + ' days · ' +
          (base.feePct > 0 ? esc(pct(base.feePct, base.feePct % 1 ? 2 : 0)) + ' fee' : 'no fee') + '</p>');
-  H.push('<div class="tablebox"><table><thead><tr><th>Capital</th><th>Final</th><th>Profit</th><th>ROI</th>' +
-         (base.feePct > 0 ? '<th>Fee</th><th>Net profit</th><th>Net final</th>' : '') + '</tr></thead><tbody>');
-  sims.forEach(s => {
-    H.push('<tr><td>' + esc(fmt(s.capitalCents, c)) + '</td><td>' + esc(money(s.finalCents)) +
-      '</td><td class="pos">' + esc(money(s.profitCents)) + '</td><td class="pos">' + esc(pct(s.roi)) + '</td>' +
-      (base.feePct > 0 ? '<td>' + esc(money(s.feeCents)) + '</td><td class="pos">' + esc(money(s.netProfitCents)) +
-        '</td><td>' + esc(money(s.netFinalCents)) + '</td>' : '') + '</tr>');
-  });
+  H.push('<div class="tablebox"><table><thead><tr>');
+
+  if (COMPARE_VIEW === "summary"){
+    H.push('<th>Capital</th><th>Final</th><th>Profit</th><th>ROI</th>' +
+      (base.feePct > 0 && sims[0].grossCents > 0 ? '<th>Fee</th><th>In hand</th><th>Net worth</th>' : ''));
+    H.push('</tr></thead><tbody>');
+    sims.forEach(s => {
+      H.push('<tr><td>' + esc(fmt(s.capitalCents, c)) + '</td><td>' + esc(money(s.finalCents)) +
+        '</td><td class="pos">' + esc(money(s.profitCents)) + '</td><td class="pos">' + esc(pct(s.roi)) + '</td>' +
+        (base.feePct > 0 && s.grossCents > 0 ? '<td class="neg">' + esc(money(s.feeCents)) +
+          '</td><td class="pos">' + esc(money(s.inHandCents)) + '</td><td>' + esc(money(s.netFinalCents)) +
+          '</td>' : '') + '</tr>');
+    });
+  } else if (COMPARE_VIEW === "daily"){
+    H.push('<th>Day</th><th>Date</th>' + head.map(h => '<th>' + h + '</th>').join(""));
+    H.push('</tr></thead><tbody>');
+    grid.forEach((d, i) => {
+      H.push('<tr><td>' + d.day + '</td><td>' + esc(fmtDate(d.date)) + '</td>' +
+        sims.map(s => '<td>' + esc(money(s.days[i].endCents)) + '</td>').join("") + '</tr>');
+    });
+  } else {
+    H.push('<th>Day</th><th>Trade</th><th>Overall</th>' + head.map(h => '<th>' + h + '</th>').join(""));
+    H.push('</tr></thead><tbody>');
+    const span = 3 + sims.length;
+    grid.forEach((d, i) => {
+      H.push('<tr class="daybreak"><td colspan="' + span + '">Day ' + d.day + ' — ' +
+             esc(fmtDate(d.date)) + '</td></tr>');
+      d.trades.forEach((t, j) => {
+        H.push('<tr><td>' + d.day + '</td><td>' + t.t + '</td><td class="seq">' + t.n + '</td>' +
+          sims.map(s => '<td>' + esc(money(s.days[i].trades[j].endCents)) + '</td>').join("") + '</tr>');
+      });
+      H.push('<tr class="daytotal"><td colspan="3">Day ' + d.day + ' close</td>' +
+        sims.map(s => '<td>' + esc(money(s.days[i].endCents)) + '</td>').join("") + '</tr>');
+    });
+  }
+
   H.push('</tbody></table></div>');
-  H.push('<p class="scroll-note">ROI is identical for every row — compounding is proportional, so only the absolute ' +
-         'amounts differ. Amounts in ' + esc(c) + '.</p>');
+  H.push('<p class="scroll-note">' + (COMPARE_VIEW === "summary"
+    ? 'ROI is identical for every row — compounding is proportional, so only the absolute amounts differ. '
+    : 'Each column is one starting capital; the figure is that run\'s balance at the end of the row. ') +
+    'Amounts in ' + esc(c) + '.</p>');
   H.push('</div>');
   out.innerHTML = H.join("");
-});
+}
+
+/* --------------------------- comparison export -------------------------- */
+function compareBase(){
+  const { sims, base } = COMPARE;
+  return "Compare_" + sims.length + "Capitals_" + sims[0].days.length + "Days_" +
+         base.tradesPerDay + "Trades";
+}
+
+function exportCompareCSV(){
+  if (!COMPARE){ toast("Run a comparison first"); return; }
+  const { sims, base } = COMPARE, grid = sims[0].days;
+  const q = s => '"' + String(s).replace(/"/g, '""') + '"';
+  const L = [];
+  L.push(q("Trading Growth Calculator — capital comparison"));
+  L.push(q("Profit per trade") + "," + q(pct(base.profitPct)));
+  L.push(q("Trades per day") + "," + base.tradesPerDay);
+  L.push(q("Days") + "," + grid.length);
+  L.push(q("Compounding") + "," + q(base.compound ? "per trade" : "off"));
+  L.push(q("Fee") + "," + q(pct(base.feePct)));
+  L.push(q("Currency") + "," + q(base.currency));
+  L.push("");
+  L.push(["Capital","Final","Profit","ROI %","Fee","In hand","Net worth"].map(q).join(","));
+  sims.forEach(s => L.push([money(s.capitalCents), money(s.finalCents), money(s.profitCents),
+    s.roi.toFixed(2), money(s.feeCents), money(s.inHandCents), money(s.netFinalCents)].map(q).join(",")));
+  L.push("");
+  const heads = sims.map(s => money(s.capitalCents));
+  if (COMPARE_VIEW === "trade"){
+    L.push((["Day","Date","Trade","Overall"]).concat(heads).map(q).join(","));
+    grid.forEach((d, i) => d.trades.forEach((t, j) =>
+      L.push([d.day, fmtDateS(d.date), t.t, t.n]
+        .concat(sims.map(s => money(s.days[i].trades[j].endCents))).map(q).join(","))));
+  } else {
+    L.push((["Day","Date"]).concat(heads).map(q).join(","));
+    grid.forEach((d, i) => L.push([d.day, fmtDateS(d.date)]
+      .concat(sims.map(s => money(s.days[i].endCents))).map(q).join(",")));
+  }
+  downloadBlob(new Blob(["﻿" + L.join("\r\n")], { type:"text/csv;charset=utf-8" }), compareBase() + ".csv");
+  toast("CSV exported");
+}
+
+function exportComparePDF(){
+  if (!COMPARE){ toast("Run a comparison first"); return; }
+  const { sims, base } = COMPARE, c = base.currency, grid = sims[0].days;
+  const trade = COMPARE_VIEW === "trade";
+  const rowsCount = trade ? sims[0].totalTrades + grid.length : grid.length;
+  if (rowsCount > 6000 && !confirm("This comparison is " + rowsCount.toLocaleString("en-US") +
+      " rows and will make a very large PDF. Continue?")) return;
+
+  const d = PdfDoc(), M = d.M, RIGHT = d.PW - M, LH = 13.2;
+  const gen = new Date();
+  let page = 0;
+
+  function header(){
+    page++;
+    d.newPage();
+    d.rectRGB(0, d.PH - 66, d.PW, 66, 0.404, 0.314, 0.643);
+    d.text("Capital Comparison", M, d.PH - 34, 17, 2, 1);
+    d.text(sims.length + " starting capitals, same settings - calculator only, no broker connection.",
+           M, d.PH - 50, 8.5, 1, 0.88);
+    d.textRight("Page " + page, RIGHT, d.PH - 34, 9, 3, 1);
+    d.y = d.PH - 92;
+  }
+  function footer(){
+    d.line(M, M + 20, RIGHT, M + 20, 0.85);
+    d.text("Generated " + gen.toLocaleString(), M, M + 8, 8, 1, 0.45);
+    d.textRight(compareBase(), RIGHT, M + 8, 8, 3, 0.45);
+  }
+  function ensure(need){ if (d.y - need < M + 26){ footer(); header(); return true; } return false; }
+  const sectionTitle = t => {
+    d.y -= 6; ensure(30);
+    d.text(t.toUpperCase(), M, d.y, 8.5, 2, 0.40);
+    d.y -= 5; d.line(M, d.y, RIGHT, d.y, 0.82); d.y -= 13;
+  };
+
+  header();
+
+  sectionTitle("Settings");
+  const kv = (k, v) => { d.text(k, M, d.y, 9.5, 1, 0.42); d.textRight(v, RIGHT, d.y, 9.5, 3, 0.1); d.y -= LH; };
+  kv("Profit per trade", pct(base.profitPct));
+  kv("Trades per day", String(base.tradesPerDay));
+  kv("Number of days", String(grid.length) + "  (" + fmtDateS(sims[0].startDate) +
+     " - " + fmtDateS(sims[0].endDate) + ")");
+  kv("Compounding", base.compound ? "On - per trade" : "Off - flat profit");
+  kv("Fee", base.feePct > 0 ? pct(base.feePct) + " of what you withdraw" : "None");
+  kv("At the end, take out", base.withdrawMode === "all" ? "Everything"
+     : base.withdrawMode === "none" ? "Nothing" : "Profit only");
+
+  /* ---- summary ---- */
+  const withFee = base.feePct > 0 && sims[0].grossCents > 0;
+  const sCols = withFee
+    ? [["Capital", M, "l"], ["Final", M + 150, "r"], ["Profit", M + 250, "r"],
+       ["ROI", M + 320, "r"], ["Fee", M + 410, "r"], ["Net worth", RIGHT, "r"]]
+    : [["Capital", M, "l"], ["Final", M + 210, "r"], ["Profit", M + 350, "r"], ["ROI", RIGHT, "r"]];
+  sectionTitle("Summary");
+  d.rect(M - 4, d.y - 4, RIGHT - M + 8, 15, 0.93);
+  sCols.forEach(([t, x, a]) => a === "l" ? d.text(t, x, d.y, 8, 2, 0.35) : d.textRight(t, x, d.y, 8, 2, 0.35));
+  d.y -= 15;
+  sims.forEach(s => {
+    ensure(20);
+    const vals = withFee
+      ? [pdfShort(s.capitalCents, c), money(s.finalCents), money(s.profitCents),
+         pct(s.roi), money(s.feeCents), money(s.netFinalCents)]
+      : [pdfShort(s.capitalCents, c), money(s.finalCents), money(s.profitCents), pct(s.roi)];
+    vals.forEach((v, i) => {
+      const [, x, a] = sCols[i];
+      a === "l" ? d.text(v, x, d.y, 8.6, 2) : d.textRight(v, x, d.y, 8.6, 3);
+    });
+    d.y -= LH;
+  });
+
+  /* ---- detail: one column per capital ---- */
+  const leftW = trade ? 92 : 112;
+  const colW  = (RIGHT - M - leftW) / sims.length;
+  const size  = sims.length <= 4 ? 8.4 : 7.6;
+  const colX  = i => M + leftW + colW * (i + 1);      /* right edge of column i */
+
+  function tableHead(){
+    d.rect(M - 4, d.y - 4, RIGHT - M + 8, 15, 0.93);
+    if (trade){
+      d.text("Day", M, d.y, 8, 2, 0.35);
+      d.text("Trade", M + 26, d.y, 8, 2, 0.35);
+      d.text("No.", M + 58, d.y, 8, 2, 0.35);
+    } else {
+      d.text("Day", M, d.y, 8, 2, 0.35);
+      d.text("Date", M + 28, d.y, 8, 2, 0.35);
+    }
+    sims.forEach((s, i) => d.textRight(pdfShort(s.capitalCents, c), colX(i), d.y, 7.6, 2, 0.35));
+    d.y -= 15;
+  }
+
+  d.y -= 8; ensure(60);
+  sectionTitle(trade ? "Balances trade by trade" : "Balances day by day");
+  tableHead();
+
+  grid.forEach((day, i) => {
+    if (trade){
+      if (ensure(46)) tableHead();
+      d.rectRGB(M - 4, d.y - 3.5, RIGHT - M + 8, 14, 0.914, 0.867, 1);
+      d.text("Day " + day.day + "  -  " + fmtDate(day.date), M, d.y, 8.4, 2, 0.13);
+      d.y -= LH + 1.5;
+      day.trades.forEach((t, j) => {
+        if (ensure(20)) tableHead();
+        d.text(String(day.day), M, d.y, size, 1);
+        d.text(String(t.t), M + 26, d.y, size, 1);
+        d.text(String(t.n), M + 58, d.y, size, 1, 0.45);
+        sims.forEach((s, k) => d.textRight(money(s.days[i].trades[j].endCents), colX(k), d.y, size, 3));
+        d.y -= LH;
+      });
+      if (ensure(20)) tableHead();
+      d.rect(M - 4, d.y - 3.5, RIGHT - M + 8, 13.5, 0.93);
+      d.text("Day " + day.day + " close", M, d.y, size, 2);
+      sims.forEach((s, k) => d.textRight(money(s.days[i].endCents), colX(k), d.y, size, 4));
+      d.y -= LH + 4;
+    } else {
+      if (ensure(20)) tableHead();
+      d.text(String(day.day), M, d.y, size, 1);
+      d.text(fmtDate(day.date), M + 28, d.y, size, 1);
+      sims.forEach((s, k) => d.textRight(money(s.days[i].endCents), colX(k), d.y, size, 3));
+      d.y -= LH;
+    }
+  });
+
+  d.y -= 6; ensure(30);
+  d.line(M, d.y + 8, RIGHT, d.y + 8, 0.6, 1);
+  d.text("Final balance", M, d.y - 4, 9.5, 2);
+  sims.forEach((s, k) => d.textRight(money(s.finalCents), colX(k), d.y - 4, size, 4));
+  d.y -= 16;
+  if (withFee){
+    ensure(20);
+    d.text("Net worth after fee", M, d.y - 4, 9.5, 2);
+    sims.forEach((s, k) => d.textRight(money(s.netFinalCents), colX(k), d.y - 4, size, 4));
+    d.y -= 16;
+  }
+  footer();
+
+  downloadBlob(d.build(), compareBase() + ".pdf");
+  toast("PDF exported");
+}
+$("#cPdfBtn").addEventListener("click", exportComparePDF);
+$("#cCsvBtn").addEventListener("click", exportCompareCSV);
 
 /* ================================ HISTORY =============================== */
 function loadHistory(){
@@ -1712,6 +1957,7 @@ function onHistoryClick(e){
 
 /* ============================== FIRST RENDER ============================ */
 renderTable();
+renderCompare();
 $("#calcBtn").click();
 </script>
 </body>
